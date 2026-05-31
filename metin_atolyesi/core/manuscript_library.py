@@ -18,7 +18,7 @@ from typing import Any
 
 
 # ---------------------------------------------------------------------------
-# Alan / Dönem / Yazı Türü sabitleri
+# Sabitler — Alan / Dönem / Yazı Türü
 # ---------------------------------------------------------------------------
 
 ALANLAR = [
@@ -58,27 +58,154 @@ YAZI_TURLERI = [
 
 HAREKE_DURUMLARI = ["Tam harekeli", "Kısmen harekeli", "Harekesiz"]
 
+# İmla hususiyetleri seçenekleri (kategorili)
+IMLA_OZELLIKLERI: dict[str, list[str]] = {
+    "Ünlü Yazımı": [
+        "Uzun ünlüler için elif/vav/ye tutarlı kullanımı",
+        "Uzun ünlüler bazen yazılmamış (defektif yazım)",
+        "İnce/kalın ünlü ayrımı gözetilmemiş",
+        "Türkçe ünlü uyumu yazıya yansımış",
+        "Elif-maksura kullanımı",
+        "Matla / hemze-i vasl tutarsızlığı",
+    ],
+    "Ünsüz Yazımı": [
+        "Sin-şın karışıklığı / tercihi",
+        "Kef-gef / nun-i Farsî ayrımı",
+        "Pe-be karışıklığı",
+        "Ze-zı/zal ayrımı tutarsız",
+        "Şedde (teşdid) kullanımı tutarsız",
+        "Hemze yazımı tutarsız",
+    ],
+    "Sayfa Düzeni": [
+        "Başlıklar kırmızı mürekkeple (rubrication)",
+        "Bölüm başları özel işaretli",
+        "Haşiye / derkenar notlar mevcut",
+        "Cetvel (çerçeve) kullanılmış",
+        "Sair satır/mısra düzeni",
+        "Tablo/cetvel içeren sayfalar var",
+    ],
+    "Özel İşaretler": [
+        "Özel kısaltmalar kullanılmış",
+        "Ebced / rakam sistemi kullanılmış",
+        "Vakıf/durak işaretleri",
+        "Tezhip/süsleme ögeleri",
+        "Sonradan eklenen notlar/düzeltmeler",
+        "Lakuna (boşluk/eksik) yerleri var",
+    ],
+    "Dil Özellikleri": [
+        "Arapça-Farsça tamlamalar yaygın",
+        "Türkçe sözdizimi belirgin",
+        "Karma dil (makarna) kullanımı",
+        "Özel ıstılah/terim sözlüğü gerektiriyor",
+        "Bölgesel ağız özellikleri yansımış",
+        "Teknik/bilim terminolojisi yoğun",
+    ],
+}
+
+# Transkripsiyon kaynağı bölüm türleri
+METIN_BOLUMLERI = [
+    "Ön Söz / Giriş",
+    "Yazma Tanıtımı",
+    "Ses Bilgisi (Fonoloji)",
+    "Şekil Bilgisi (Morfoloji)",
+    "Cümle Bilgisi (Sözdizimi)",
+    "Söz Varlığı / Leksik",
+    "Dizin (İndeks)",
+    "Sözlük / Glossar",
+    "Metin Transkripsiyonu",
+    "Tıpkıbasım (Facsimile)",
+    "Kaynakça",
+    "Özel Bölüm",
+]
+
 
 # ---------------------------------------------------------------------------
-# Metadata veri sınıfı
+# Veri sınıfları
 # ---------------------------------------------------------------------------
 
 @dataclass
+class VarakSatirBilgisi:
+    """Sayfa/varak bazlı satır sayısı bilgisi."""
+    genel_min:     int  = 15     # genel minimum satır
+    genel_max:     int  = 15     # genel maksimum (min==max ise düzenli)
+    ilk_varak:     int  = 0      # ilk varak satır sayısı (0=genel gibi)
+    son_varak:     int  = 0      # son varak satır sayısı
+    baslik_varak:  int  = 0      # başlık/unvan sayfası
+    ozel_varaklar: str  = ""     # "1a:12, 45b:18" formatında özel varaklar
+    duzenli:       bool = True   # satır sayısı düzenli mi?
+    notlar:        str  = ""     # serbest not
+
+    @property
+    def ozet(self) -> str:
+        if self.duzenli:
+            return f"{self.genel_min} satır (düzenli)"
+        return f"{self.genel_min}-{self.genel_max} satır (değişken)"
+
+
+@dataclass
+class MetinBolumu:
+    """Transkripsiyon/baskı kaynağında bir bölüm."""
+    ad:        str = ""
+    baslangic: int = 0
+    bitis:     int = 0
+    aciklama:  str = ""
+
+
+@dataclass
+class HarfFormu:
+    """Paleografik harf formu kaydı."""
+    harf:         str = ""   # Arap harfi / transliterasyon
+    konum:        str = ""   # baş / orta / son / bağımsız
+    ornek_kelime: str = ""   # örnek kelime
+    aciklama:     str = ""   # açıklama notu
+    # Görüntü ayrı dosyada: samples/[hash]_harf_[harf]_[konum].jpg
+
+
+@dataclass
 class ManuscriptMeta:
-    eser_adi:       str   = ""
-    yazar:          str   = ""
-    muellif:        str   = ""          # müstensih / hattat
-    alan:           str   = "Osmanlıca"
-    donem:          str   = "Belirsiz"
-    yazi_turu:      str   = "Nesih"
-    hareke:         str   = "Harekesiz"
-    satir_sayisi:   int   = 15
-    sutun_sayisi:   int   = 1
-    dil_kodu:       str   = "ara"       # tesseract dil kodu
-    guven:          float = 0.9         # transkripsiyon güveni 0–1
-    aciklama:       str   = ""
-    kayit_tarihi:   str   = ""
-    toplam_ornek:   int   = 0
+    # ── Temel kimlik ─────────────────────────────────────────────────
+    eser_adi:        str   = ""
+    yazar:           str   = ""
+    muellif:         str   = ""         # müstensih / hattat
+    istinsah_tarihi: str   = ""         # kopya tarihi (h./m.)
+    kutuphanesi:     str   = ""         # bulunduğu kütüphane / arşiv
+    demirbaş_no:     str   = ""         # katalog / demirbaş numarası
+    tez_referansi:   str   = ""         # ilgili tez / yayın bilgisi
+
+    # ── Yazı ve alan ─────────────────────────────────────────────────
+    alan:            str   = "Osmanlıca"
+    donem:           str   = "Belirsiz"
+    yazi_turu:       str   = "Nesih"
+    hareke:          str   = "Harekesiz"
+    dil_kodu:        str   = "ara"
+    sutun_sayisi:    int   = 1
+    toplam_varak:    int   = 0
+
+    # ── Satır bilgisi ────────────────────────────────────────────────
+    varak_satir:     VarakSatirBilgisi = field(default_factory=VarakSatirBilgisi)
+
+    # ── İmla hususiyetleri ───────────────────────────────────────────
+    imla_secimler:   list[str] = field(default_factory=list)   # checkbox seçimleri
+    imla_serbest:    str       = ""                            # serbest metin
+    aktarim_ilkeleri: str      = ""                            # transkripsiyon kuralları
+
+    # ── Kaynak yapısı ────────────────────────────────────────────────
+    metin_bolumleri: list[MetinBolumu] = field(default_factory=list)
+    kaynak_turu:     str = "transkripsiyon"  # transkripsiyon / tez / baskı / dijital
+
+    # ── Paleografi ───────────────────────────────────────────────────
+    harf_formlari:   list[HarfFormu] = field(default_factory=list)
+    ozel_notlar:     str = ""
+
+    # ── Meta ─────────────────────────────────────────────────────────
+    guven:           float = 0.9
+    kayit_tarihi:    str   = ""
+    toplam_ornek:    int   = 0
+
+    # Geriye dönük uyum
+    @property
+    def satir_sayisi(self) -> int:
+        return self.varak_satir.genel_min
 
 
 # ---------------------------------------------------------------------------
@@ -86,19 +213,16 @@ class ManuscriptMeta:
 # ---------------------------------------------------------------------------
 
 def _lib_dir() -> Path:
-    """Yazma kütüphanesi klasörü — veri reposunda veya yerel."""
     candidates = [
         Path("D:/metin-atolyesi-veri/manuscripts"),
         Path("C:/metin-atolyesi-veri/manuscripts"),
         Path.home() / "metin-atolyesi-veri" / "manuscripts",
     ]
     for p in candidates:
-        parent = p.parent
-        if (parent / ".git").exists() or (parent / "corrections").exists():
+        if (p.parent / ".git").exists() or (p.parent / "corrections").exists():
             p.mkdir(exist_ok=True)
             (p / "samples").mkdir(exist_ok=True)
             return p
-    # Yerel yedek
     d = Path.home() / ".metin_atolyesi" / "manuscripts"
     d.mkdir(parents=True, exist_ok=True)
     (d / "samples").mkdir(exist_ok=True)
@@ -122,7 +246,7 @@ def _read_jsonl(path: Path) -> list[dict]:
     if not path.exists():
         return []
     out = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
         if line:
             try:
@@ -133,29 +257,24 @@ def _read_jsonl(path: Path) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Sayfa çifti ekleyici
+# Sayfa yardımcıları
 # ---------------------------------------------------------------------------
 
 def _page_hash(pdf_path: Path, page_no: int) -> str:
-    h = hashlib.sha256(f"{pdf_path}:{page_no}".encode()).hexdigest()[:12]
-    return h
+    return hashlib.sha256(f"{pdf_path}:{page_no}".encode()).hexdigest()[:12]
 
 
-def _extract_page_thumbnail(pdf_path: Path, page_no: int,
-                             max_px: int = 800) -> bytes | None:
-    """PDF sayfasını küçük JPEG olarak çıkarır (few-shot için)."""
+def _extract_page_thumbnail(pdf_path: Path, page_no: int, max_px: int = 800) -> bytes | None:
     try:
-        import fitz  # PyMuPDF
+        import fitz
         doc = fitz.open(str(pdf_path))
         if page_no >= len(doc):
             return None
-        page = doc[page_no]
+        page  = doc[page_no]
         scale = max_px / max(page.rect.width, page.rect.height)
-        pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
-        img_bytes = pix.tobytes("jpeg")
-        # JPEG quality downsample for storage efficiency
+        pix   = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
         from PIL import Image
-        img = Image.open(io.BytesIO(img_bytes))
+        img = Image.open(io.BytesIO(pix.tobytes("jpeg")))
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=72)
         return buf.getvalue()
@@ -163,28 +282,21 @@ def _extract_page_thumbnail(pdf_path: Path, page_no: int,
         return None
 
 
-def _save_sample(page_hash: str, image_bytes: bytes | None,
-                 text: str) -> None:
-    samples_dir = _lib_dir() / "samples"
+def _save_sample(page_hash: str, image_bytes: bytes | None, text: str) -> None:
+    sdir = _lib_dir() / "samples"
     if image_bytes:
-        img_path = samples_dir / f"{page_hash}.jpg"
-        img_path.write_bytes(image_bytes)
-    txt_path = samples_dir / f"{page_hash}.zlib"
-    txt_path.write_bytes(zlib.compress(text.encode("utf-8"), 9))
+        (sdir / f"{page_hash}.jpg").write_bytes(image_bytes)
+    (sdir / f"{page_hash}.zlib").write_bytes(zlib.compress(text.encode("utf-8"), 9))
 
 
 def _load_sample_text(page_hash: str) -> str:
-    path = _lib_dir() / "samples" / f"{page_hash}.zlib"
-    if not path.exists():
-        return ""
-    return zlib.decompress(path.read_bytes()).decode("utf-8")
+    p = _lib_dir() / "samples" / f"{page_hash}.zlib"
+    return zlib.decompress(p.read_bytes()).decode("utf-8") if p.exists() else ""
 
 
 def _load_sample_image_b64(page_hash: str) -> str:
-    path = _lib_dir() / "samples" / f"{page_hash}.jpg"
-    if not path.exists():
-        return ""
-    return base64.standard_b64encode(path.read_bytes()).decode()
+    p = _lib_dir() / "samples" / f"{page_hash}.jpg"
+    return base64.standard_b64encode(p.read_bytes()).decode() if p.exists() else ""
 
 
 # ---------------------------------------------------------------------------
@@ -192,161 +304,109 @@ def _load_sample_image_b64(page_hash: str) -> str:
 # ---------------------------------------------------------------------------
 
 class ManuscriptLibrary:
-    """El yazması öğrenme kütüphanesi."""
-
-    # ── Öğretme ──────────────────────────────────────────────────────────
 
     def teach(
         self,
-        ms_pdf:      Path,
+        ms_pdf:       Path,
         trans_source: Path,
-        ms_pages:    tuple[int, int],
-        trans_pages: tuple[int, int] | None,
-        meta:        ManuscriptMeta,
-        progress_cb: Any = None,
+        ms_pages:     tuple[int, int],
+        trans_pages:  tuple[int, int] | None,
+        meta:         ManuscriptMeta,
+        progress_cb:  Any = None,
     ) -> int:
-        """
-        Yazma + transkripsiyon çiftlerini öğret.
-
-        ms_pdf       : El yazması PDF
-        trans_source : Transkripsiyon PDF'i veya .txt dosyası
-        ms_pages     : (başlangıç, bitiş) sayfa indeksleri (0 tabanlı)
-        trans_pages  : Transkripsiyon sayfa aralığı (None ise ms_pages ile aynı)
-        meta         : Alan bilgisi
-        progress_cb  : (tamamlanan, toplam) → None
-
-        Döndürür: kaydedilen çift sayısı
-        """
         if trans_pages is None:
             trans_pages = ms_pages
 
         trans_texts = self._extract_transcription(
-            trans_source, trans_pages[0], trans_pages[1]
-        )
-        ms_start, ms_end = ms_pages
-        ms_count = ms_end - ms_start
-        total = min(ms_count, len(trans_texts))
+            trans_source, trans_pages[0], trans_pages[1])
 
-        meta.kayit_tarihi  = datetime.now().isoformat(timespec="seconds")
-        meta.toplam_ornek  = total
+        ms_start, ms_end = ms_pages
+        total = min(ms_end - ms_start, len(trans_texts))
+
+        meta.kayit_tarihi = datetime.now().isoformat(timespec="seconds")
+        meta.toplam_ornek = total
         entry_id = _page_hash(ms_pdf, ms_start)
 
-        # Üst düzey kayıt
+        # Meta'yı dict'e çevir (iç içe dataclass'lar için özel)
+        meta_dict = self._meta_to_dict(meta)
+
         record: dict = {
-            "id":          entry_id,
-            "eser_adi":    meta.eser_adi,
-            "ms_pdf":      str(ms_pdf),
-            "ms_start":    ms_start,
-            "ms_end":      ms_end,
-            "meta":        asdict(meta),
-            "pages":       [],
+            "id":       entry_id,
+            "eser_adi": meta.eser_adi,
+            "ms_pdf":   str(ms_pdf),
+            "ms_start": ms_start,
+            "ms_end":   ms_end,
+            "meta":     meta_dict,
+            "pages":    [],
         }
 
         for i in range(total):
-            ms_page_no    = ms_start + i
-            trans_text    = trans_texts[i].strip()
-            if not trans_text:
+            pg_no = ms_start + i
+            text  = trans_texts[i].strip()
+            if not text:
                 continue
-
-            ph = _page_hash(ms_pdf, ms_page_no)
-            img_bytes = _extract_page_thumbnail(ms_pdf, ms_page_no)
-            _save_sample(ph, img_bytes, trans_text)
-
-            record["pages"].append({
-                "hash":    ph,
-                "ms_page": ms_page_no,
-                "has_img": img_bytes is not None,
-            })
-
+            ph = _page_hash(ms_pdf, pg_no)
+            _save_sample(ph, _extract_page_thumbnail(ms_pdf, pg_no), text)
+            record["pages"].append({"hash": ph, "ms_page": pg_no,
+                                    "has_img": bool((_lib_dir()/"samples"/f"{ph}.jpg").exists())})
             if progress_cb:
                 progress_cb(i + 1, total)
 
         _append_jsonl(_index_path(), record)
         return total
 
-    # ── Transkripsiyon çıkarma ────────────────────────────────────────────
+    @staticmethod
+    def _meta_to_dict(meta: ManuscriptMeta) -> dict:
+        """Nested dataclass'ları dict'e çevirir."""
+        d = asdict(meta)
+        return d
 
     @staticmethod
     def _extract_transcription(source: Path, start: int, end: int) -> list[str]:
-        """Transkripsiyon kaynağından sayfa metinlerini çıkarır."""
-        if source.suffix.lower() in (".txt",):
-            # Düz metin — satırları sayfalara böl
+        if source.suffix.lower() == ".txt":
             lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
-            pages_needed = end - start
-            chunk = max(1, len(lines) // max(pages_needed, 1))
-            texts = []
-            for i in range(pages_needed):
-                block = lines[i * chunk: (i + 1) * chunk]
-                texts.append("\n".join(block))
-            return texts
-
-        # PDF
+            needed = end - start
+            chunk  = max(1, len(lines) // max(needed, 1))
+            return ["\n".join(lines[i*chunk:(i+1)*chunk]) for i in range(needed)]
         try:
             import fitz
-            doc   = fitz.open(str(source))
-            texts = []
-            for pg in range(start, min(end, len(doc))):
-                texts.append(doc[pg].get_text("text"))
-            return texts
+            doc = fitz.open(str(source))
+            return [doc[pg].get_text("text") for pg in range(start, min(end, len(doc)))]
         except Exception:
             return [""] * (end - start)
 
-    # ── Benzer örnekleri getir (few-shot için) ────────────────────────────
-
-    def get_similar_examples(
-        self,
-        alan:        str,
-        donem:       str = "",
-        yazi_turu:   str = "",
-        max_pages:   int = 3,
-    ) -> list[dict]:
-        """
-        Benzer yazma örneklerini döndürür.
-        Her örnek: {"text": ..., "image_b64": ..., "meta": ...}
-        """
+    def get_similar_examples(self, alan: str, donem: str = "",
+                              yazi_turu: str = "", max_pages: int = 3) -> list[dict]:
         records = _read_jsonl(_index_path())
-        if not records:
-            return []
-
-        # Benzerlik puanı hesapla
-        scored = []
+        scored  = []
         for rec in records:
             m = rec.get("meta", {})
-            score = 0
-            if m.get("alan", "") == alan:             score += 10
-            if donem and m.get("donem", "") == donem: score += 5
-            if yazi_turu and m.get("yazi_turu", "") == yazi_turu: score += 3
+            score  = (10 if m.get("alan") == alan else 0)
+            score += (5  if donem     and m.get("donem")     == donem     else 0)
+            score += (3  if yazi_turu and m.get("yazi_turu") == yazi_turu else 0)
             scored.append((score, rec))
-
         scored.sort(key=lambda x: -x[0])
-        examples = []
 
-        for _score, rec in scored[:3]:  # En benzer 3 eser
-            pages = rec.get("pages", [])
-            for pg in pages[:max_pages]:
+        examples = []
+        for _, rec in scored[:3]:
+            for pg in rec.get("pages", [])[:max_pages]:
                 ph   = pg["hash"]
                 text = _load_sample_text(ph)
-                if not text:
-                    continue
-                examples.append({
-                    "text":       text,
-                    "image_b64":  _load_sample_image_b64(ph) if pg.get("has_img") else "",
-                    "eser":       rec.get("eser_adi", ""),
-                    "meta":       rec.get("meta", {}),
-                })
-                if len(examples) >= max_pages * 2:
-                    break
+                if text:
+                    examples.append({
+                        "text":      text,
+                        "image_b64": _load_sample_image_b64(ph) if pg.get("has_img") else "",
+                        "eser":      rec.get("eser_adi", ""),
+                        "meta":      rec.get("meta", {}),
+                    })
             if len(examples) >= max_pages * 2:
                 break
-
         return examples
 
-    # ── Kütüphane istatistikleri ──────────────────────────────────────────
-
     def stats(self) -> dict:
-        records = _read_jsonl(_index_path())
+        records     = _read_jsonl(_index_path())
         total_pages = sum(len(r.get("pages", [])) for r in records)
-        alanlar = {}
+        alanlar     = {}
         for r in records:
             a = r.get("meta", {}).get("alan", "Belirsiz")
             alanlar[a] = alanlar.get(a, 0) + 1
@@ -365,59 +425,44 @@ class ManuscriptLibrary:
 # Claude few-shot prompt oluşturucu
 # ---------------------------------------------------------------------------
 
-def build_fewshot_prompt(
-    lang_hint:  str,
-    alan:       str,
-    donem:      str       = "",
-    yazi_turu:  str       = "",
-    hareke:     str       = "",
-    satir:      int       = 0,
-) -> tuple[str, list[dict]]:
-    """
-    Kütüphaneden benzer örnekleri çekip Claude için few-shot prompt
-    ve ek görüntü content blokları oluşturur.
-
-    Döndürür:
-      (ek_prompt_metni, ek_image_content_blokları)
-    """
+def build_fewshot_prompt(lang_hint: str, alan: str, donem: str = "",
+                          yazi_turu: str = "", hareke: str = "",
+                          satir: int = 0) -> tuple[str, list[dict]]:
     lib  = get_library()
     exs  = lib.get_similar_examples(alan, donem, yazi_turu, max_pages=2)
     if not exs:
         return "", []
 
-    lines = ["\nÖğrenilmiş benzer eserlerden örnekler:"]
-    image_blocks: list[dict] = []
+    lines        = []
+    image_blocks = []
+    extra_info   = []
 
+    if alan:      extra_info.append(f"Alan: {alan}")
+    if donem:     extra_info.append(f"Dönem: {donem}")
+    if yazi_turu: extra_info.append(f"Yazı türü: {yazi_turu}")
+    if hareke:    extra_info.append(f"Hareke: {hareke}")
+    if satir > 0: extra_info.append(f"Sayfa satır sayısı: ~{satir}")
+
+    if extra_info:
+        lines.append("\nBu eserin özellikleri:\n" +
+                     "\n".join(f"  • {x}" for x in extra_info))
+
+    lines.append("\nÖğrenilmiş benzer eserlerden örnekler:")
     for i, ex in enumerate(exs, 1):
         m = ex.get("meta", {})
         lines.append(
-            f"\n[Örnek {i} — {ex.get('eser', '?')} "
-            f"({m.get('alan','')}, {m.get('donem','')}, "
-            f"{m.get('yazi_turu','')}, {m.get('hareke','')})]\n"
-            f"Doğru transkripsiyon:\n{ex['text'][:400]}"
+            f"\n[Örnek {i} — {ex.get('eser','?')} "
+            f"({m.get('alan','')}, {m.get('donem','')})]\n"
+            f"Transkripsiyon:\n{ex['text'][:400]}"
         )
         if ex.get("image_b64"):
-            image_blocks.append({
-                "type": "image",
-                "source": {
-                    "type":       "base64",
-                    "media_type": "image/jpeg",
-                    "data":       ex["image_b64"],
-                },
-            })
-            image_blocks.append({
-                "type": "text",
-                "text": f"(Yukarıdaki görüntünün doğru transkripsiyonu: {ex['text'][:200]})",
-            })
-
-    extra_info = []
-    if alan:        extra_info.append(f"Alan: {alan}")
-    if donem:       extra_info.append(f"Dönem: {donem}")
-    if yazi_turu:   extra_info.append(f"Yazı türü: {yazi_turu}")
-    if hareke:      extra_info.append(f"Hareke: {hareke}")
-    if satir > 0:   extra_info.append(f"Sayfa satır sayısı: ~{satir}")
-    if extra_info:
-        lines.insert(1, "\nBu eserin özellikleri:\n" + "\n".join(f"  • {x}" for x in extra_info))
+            image_blocks += [
+                {"type": "image", "source": {
+                    "type": "base64", "media_type": "image/jpeg",
+                    "data": ex["image_b64"]}},
+                {"type": "text",
+                 "text": f"(Yukarıdaki görüntünün transkripsiyonu: {ex['text'][:200]})"},
+            ]
 
     return "\n".join(lines), image_blocks
 
