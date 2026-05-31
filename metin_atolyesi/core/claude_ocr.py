@@ -202,7 +202,7 @@ Kurallar:
     except Exception as exc:
         return f"[Claude OCR hatası: {exc}]", []
 
-    raw_text: str = message.content[0].text
+    raw_text: str = message.content[0].text  # type: ignore[union-attr]
 
     # [?]kelime → "kelime" temizle + şüpheli listesine ekle
     suspicious: list[dict] = []
@@ -228,3 +228,84 @@ Kurallar:
     clean_text = "".join(clean_parts).strip()
 
     return clean_text, suspicious
+
+
+# ---------------------------------------------------------------------------
+# El yazması görüntüsünde kelime konumu bulma
+# ---------------------------------------------------------------------------
+
+def find_word_in_image(
+    image_path: Path,
+    word: str,
+    api_key: str = "",
+    model: str = "",
+) -> dict:
+    """Claude Vision kullanarak el yazması görüntüsünde kelime konumunu bulur.
+
+    Returns
+    -------
+    dict anahtarları:
+        bulundu  : bool
+        konum    : {"x1":0-100, "y1":0-100, "x2":0-100, "y2":0-100} | None
+        aciklama : str   – Claude'un konum tarifi
+        hata     : str   – sadece hata durumunda
+    """
+    if not api_key:
+        api_key = get_api_key()
+    if not model:
+        model = _default_model or "claude-opus-4-5"
+
+    try:
+        import anthropic
+    except ImportError:
+        return {"bulundu": False,
+                "hata": "anthropic paketi kurulu değil (pip install anthropic)"}
+
+    if not api_key:
+        return {"bulundu": False,
+                "hata": "API anahtarı ayarlanmamış.\n"
+                        "Dosya → ⚡ Claude API Ayarları menüsünden girin."}
+
+    b64_data, media_type = _image_to_base64(image_path)
+
+    prompt = (
+        f'Bu el yazması sayfasında "{word}" kelimesini bul.\n'
+        "Yanıtını SADECE aşağıdaki JSON formatında ver, başka hiçbir şey yazma:\n\n"
+        '{"bulundu": true, "konum": {"x1": 15, "y1": 42, "x2": 28, "y2": 49}, '
+        '"aciklama": "5. satırın ortasında"}\n\n'
+        "Kurallar:\n"
+        "- x1,y1 sol-üst köşe, x2,y2 sağ-alt köşe (0-100 arası yüzde)\n"
+        "- Kelime yoksa: "
+        '{"bulundu": false, "konum": null, "aciklama": "kelime bu sayfada yok"}\n'
+        "- Birden fazla geçiyorsa ilkini işaretle\n"
+        "- SADECE JSON döndür, markdown veya ek açıklama ekleme"
+    )
+
+    try:
+        client  = anthropic.Anthropic(api_key=api_key)
+        message = client.messages.create(
+            model=model,
+            max_tokens=256,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type":       "base64",
+                            "media_type": media_type,
+                            "data":       b64_data,
+                        },
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        )
+        raw = message.content[0].text.strip()  # type: ignore[union-attr]
+        # Olası markdown bloğunu temizle
+        raw = re.sub(r"^```[a-z]*\n?", "", raw).strip().rstrip("`").strip()
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return {"bulundu": False, "hata": f"JSON ayrıştırma hatası: {exc}"}
+    except Exception as exc:
+        return {"bulundu": False, "hata": str(exc)}

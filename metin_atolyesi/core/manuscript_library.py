@@ -549,6 +549,61 @@ class ManuscriptLibrary:
     def list_entries(self) -> list[dict]:
         return _read_jsonl(_index_path())
 
+    def search_in_transcriptions(
+        self,
+        word: str,
+        eser_adi: str = "",
+        max_results: int = 20,
+    ) -> list[dict]:
+        """Kaydedilmiş transkripsiyon metinlerinde kelime arar.
+
+        Parameters
+        ----------
+        word        : Aranacak kelime / ifade (büyük/küçük harf duyarsız)
+        eser_adi    : Sadece bu eserde ara; boşsa tüm kütüphane
+        max_results : Döndürülecek maksimum eşleşme sayısı
+
+        Returns
+        -------
+        Liste halinde dict:
+            eser_adi, entry_id, ms_page, hash, has_img,
+            context (±80 karakter), word_offset, word_len
+        """
+        word_lower = word.strip().lower()
+        if not word_lower:
+            return []
+
+        results: list[dict] = []
+        entries = _read_jsonl(_index_path())
+
+        for entry in entries:
+            if eser_adi and entry.get("eser_adi", "").strip().lower() \
+                    != eser_adi.strip().lower():
+                continue
+            for pg in entry.get("pages", []):
+                text = _load_sample_text(pg["hash"])
+                if not text:
+                    continue
+                idx = text.lower().find(word_lower)
+                if idx < 0:
+                    continue
+                ctx_start = max(0, idx - 80)
+                ctx_end   = min(len(text), idx + len(word_lower) + 80)
+                context   = text[ctx_start:ctx_end].replace("\n", " ")
+                results.append({
+                    "eser_adi":    entry.get("eser_adi", "—"),
+                    "entry_id":    entry.get("id", ""),
+                    "ms_page":     pg["ms_page"],
+                    "hash":        pg["hash"],
+                    "has_img":     pg.get("has_img", False),
+                    "context":     context,
+                    "word_offset": idx - ctx_start,
+                    "word_len":    len(word_lower),
+                })
+                if len(results) >= max_results:
+                    return results
+        return results
+
 
 # ---------------------------------------------------------------------------
 # Claude few-shot prompt oluşturucu

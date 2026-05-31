@@ -245,6 +245,10 @@ class ManuscriptWizard(tk.Toplevel):
         self._last_entry_id: str = ""
         self._learning_done: bool = False
 
+        # Adım 7 — Öğrenme testi
+        self._test_word_var = tk.StringVar()
+        self._test_all_var  = tk.BooleanVar(value=False)
+
     # ── Kabuk ────────────────────────────────────────────────────────────
 
     def _build_shell(self):
@@ -1857,6 +1861,38 @@ class ManuscriptWizard(tk.Toplevel):
                      bg=_CARD, fg=_AMBER, font=_FS,
                      justify=tk.LEFT, wraplength=660, padx=4, pady=4).pack(anchor=tk.W)
 
+        # ─ Öğrenme Testi ─────────────────────────────────────────────
+        ct = _card(scroll, padx=0, pady=0)
+        ct.pack(fill=tk.X, padx=16, pady=(8, 4))
+        _section(ct, "Öğrenme Testi — Kelimeyi Yazmada Bul", "🔍").pack(fill=tk.X)
+
+        tk.Label(ct,
+                 text="Bir kelime yazın → transkripsiyon metinlerinde aranır → "
+                      "el yazması sayfasında kırmızı çerçeveyle gösterilir.",
+                 bg=_CARD, fg=_FG2, font=_FS,
+                 justify=tk.LEFT, padx=14, pady=4, wraplength=660).pack(fill=tk.X)
+
+        # Arama satırı
+        sr = tk.Frame(ct, bg=_CARD)
+        sr.pack(fill=tk.X, padx=14, pady=(2, 4))
+        _entry(sr, self._test_word_var, width=30).pack(side=tk.LEFT, padx=(0, 8))
+        tk.Checkbutton(sr, text="Tüm kütüphane",
+                       variable=self._test_all_var,
+                       bg=_CARD, fg=_FG2, font=_FS,
+                       selectcolor="#1c2035",
+                       activebackground=_CARD).pack(side=tk.LEFT, padx=(0, 10))
+        _btn(sr, "🔍  Ara",
+             self._test_search, "primary").pack(side=tk.LEFT)
+
+        # Sonuç alanı
+        self._test_result_frame = tk.Frame(ct, bg=_CARD)
+        self._test_result_frame.pack(fill=tk.X, padx=14, pady=(0, 10))
+
+        # Enter tuşu da çalışsın
+        def _enter_search(e):
+            self._test_search()
+        sr.winfo_children()[0].bind("<Return>", _enter_search)
+
         # ─ Eylem butonları ─
         act = tk.Frame(scroll, bg=_BG)
         act.pack(fill=tk.X, padx=16, pady=(8, 14))
@@ -1872,6 +1908,232 @@ class ManuscriptWizard(tk.Toplevel):
         self._btn_back.configure(
             state=tk.NORMAL,
             text="◀  Özet'e Dön")
+
+    # ════════════════════════════════════════════════════════════════
+    #  Öğrenme Testi
+    # ════════════════════════════════════════════════════════════════
+
+    def _test_search(self):
+        """Kelimeyi transkripsiyon metinlerinde arar, sonuçları listeler."""
+        word = self._test_word_var.get().strip()
+        if not word:
+            messagebox.showwarning("Eksik", "Aranacak kelimeyi girin.", parent=self)
+            return
+
+        # Önceki sonuçları temizle
+        for w in self._test_result_frame.winfo_children():
+            w.destroy()
+        _lbl(self._test_result_frame, "🔄  Aranıyor…",
+             fg=_FG2, font=_FS).pack(anchor=tk.W, pady=4)
+        self.update_idletasks()
+
+        lib = get_library()
+
+        # Hangi eserde aranacak?
+        if self._test_all_var.get():
+            eser = ""
+        else:
+            eser = ""
+            for e in lib.list_entries():
+                if e.get("id") == self._last_entry_id:
+                    eser = e.get("eser_adi", "")
+                    break
+
+        results = lib.search_in_transcriptions(word, eser_adi=eser)
+
+        # Sonuçları temizle
+        for w in self._test_result_frame.winfo_children():
+            w.destroy()
+
+        if not results:
+            _lbl(self._test_result_frame,
+                 f"'{word}' transkripsiyon metinlerinde bulunamadı.",
+                 fg=_AMBER, font=_FS).pack(anchor=tk.W, pady=8)
+            return
+
+        _lbl(self._test_result_frame,
+             f"✅  {len(results)} eşleşme — "
+             "📍 Yazmada Göster ile sayfada konumunu görün:",
+             fg=_GREEN, font=_FSB).pack(anchor=tk.W, pady=(4, 6))
+
+        for res in results:
+            rf = tk.Frame(self._test_result_frame, bg="#1c2035",
+                          highlightbackground=_BORDER, highlightthickness=1)
+            rf.pack(fill=tk.X, pady=2)
+
+            # Sol: eser + sayfa
+            info = f"  {res['eser_adi']}  S.{res['ms_page']+1}"
+            tk.Label(rf, text=info, bg="#1c2035", fg=_ACC1,
+                     font=_FSB, width=26, anchor=tk.W).pack(side=tk.LEFT, padx=4)
+
+            # Bağlam metni — kelime altın renkli
+            ctx = res["context"]
+            off = res["word_offset"]
+            wln = res["word_len"]
+            before  = ctx[:off]
+            matched = ctx[off:off + wln]
+            after   = ctx[off + wln:]
+
+            ctx_f = tk.Frame(rf, bg="#1c2035")
+            ctx_f.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+            pre = ("…" + before[-28:]) if len(before) > 28 else before
+            suf = (after[:28] + "…") if len(after) > 28 else after
+            tk.Label(ctx_f, text=pre,
+                     bg="#1c2035", fg=_FG2, font=_FS).pack(side=tk.LEFT)
+            tk.Label(ctx_f, text=matched,
+                     bg="#2a1800", fg="#ffd700", font=_FSB).pack(side=tk.LEFT)
+            tk.Label(ctx_f, text=suf,
+                     bg="#1c2035", fg=_FG2, font=_FS).pack(side=tk.LEFT)
+
+            # Sağ: görüntüde bul butonu
+            if res["has_img"]:
+                _btn(rf, "📍  Yazmada Göster",
+                     lambda r=res, w=word: self._show_word_in_image(r, w),
+                     "primary").pack(side=tk.RIGHT, padx=6, pady=3)
+            else:
+                tk.Label(rf, text="(görüntü yok)", bg="#1c2035",
+                         fg=_FG3, font=_FS).pack(side=tk.RIGHT, padx=8)
+
+    def _show_word_in_image(self, result: dict, word: str):
+        """Claude Vision ile kelimeyi görüntüde bul, kırmızı çerçeveyle göster."""
+        from metin_atolyesi.core.manuscript_library import _lib_dir
+        from metin_atolyesi.core.claude_ocr import find_word_in_image
+
+        thumb_path = _lib_dir() / "samples" / f"{result['hash']}.jpg"
+        if not thumb_path.exists():
+            messagebox.showwarning("Görüntü Yok",
+                "Bu sayfanın kaydedilmiş görüntüsü bulunamadı.", parent=self)
+            return
+
+        # ── Dialog ──────────────────────────────────────────────────
+        dlg = tk.Toplevel(self)
+        dlg.title(f"🔍 '{word}'  —  S.{result['ms_page']+1}")
+        dlg.configure(bg=_BG)
+        dlg.geometry("720x620")
+        dlg.minsize(520, 440)
+        dlg.transient(self)
+        dlg.grab_set()
+
+        # Başlık bandı
+        hf = tk.Frame(dlg, bg="#0d1117", height=46)
+        hf.pack(fill=tk.X)
+        hf.pack_propagate(False)
+        tk.Label(hf,
+                 text=f"  🔍  '{word}'  ·  {result['eser_adi']}  ·  S.{result['ms_page']+1}",
+                 bg="#0d1117", fg=_FG, font=_FH).pack(side=tk.LEFT, padx=14, pady=10)
+
+        # Durum satırı
+        status_lbl = tk.Label(dlg, text="⏳  Claude Vision ile aranıyor…",
+                               bg=_BG, fg=_AMBER, font=_FSB, anchor=tk.W)
+        status_lbl.pack(fill=tk.X, padx=14, pady=(6, 2))
+
+        # Konum açıklaması
+        explain_lbl = tk.Label(dlg, text="", bg=_BG, fg=_FG2, font=_FS, anchor=tk.W)
+        explain_lbl.pack(fill=tk.X, padx=14, pady=(0, 4))
+
+        # Görüntü alanı (canvas + scrollbar)
+        img_outer = tk.Frame(dlg, bg=_BG)
+        img_outer.pack(fill=tk.BOTH, expand=True, padx=14, pady=2)
+
+        # Alt: kapat
+        _btn(dlg, "✓  Kapat", dlg.destroy, "ghost").pack(
+            side=tk.RIGHT, padx=14, pady=8)
+
+        # ── Görüntüyü çiz ───────────────────────────────────────────
+        def _display_image(konum: dict | None):
+            for w in img_outer.winfo_children():
+                w.destroy()
+            try:
+                from PIL import Image, ImageDraw, ImageTk
+
+                img = Image.open(thumb_path)
+
+                if konum:
+                    draw = ImageDraw.Draw(img)
+                    iw, ih = img.size
+                    x1 = int(konum["x1"] / 100 * iw)
+                    y1 = int(konum["y1"] / 100 * ih)
+                    x2 = int(konum["x2"] / 100 * iw)
+                    y2 = int(konum["y2"] / 100 * ih)
+                    # Kırmızı kalın çerçeve (5 piksel)
+                    for t in range(5):
+                        draw.rectangle(
+                            [x1 - t, y1 - t, x2 + t, y2 + t],
+                            outline="#ff2020")
+                    # Turuncu dış çerçeve (belirginlik için)
+                    for t in range(2):
+                        draw.rectangle(
+                            [x1 - 8 - t, y1 - 8 - t, x2 + 8 + t, y2 + 8 + t],
+                            outline="#ff8c00")
+
+                # Genişliğe sığdır
+                dlg.update_idletasks()
+                max_w = max(dlg.winfo_width() - 32, 500)
+                if img.width > max_w:
+                    ratio = max_w / img.width
+                    img   = img.resize(
+                        (max_w, int(img.height * ratio)), Image.LANCZOS)
+
+                photo = ImageTk.PhotoImage(img)
+
+                # Canvas + dikey scrollbar
+                sb_c = ttk.Scrollbar(img_outer, orient=tk.VERTICAL)
+                c = tk.Canvas(img_outer, bg="#0a0a14",
+                              highlightthickness=0,
+                              yscrollcommand=sb_c.set)
+                sb_c.configure(command=c.yview)
+                sb_c.pack(side=tk.RIGHT, fill=tk.Y)
+                c.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+                c.create_image(0, 0, anchor=tk.NW, image=photo)
+                c.configure(scrollregion=(0, 0, img.width, img.height))
+                c.image = photo   # GC koruması
+
+                # Kelime bulunduysa o bölgeye kaydır
+                if konum:
+                    c.yview_moveto(max(0.0, konum["y1"] / 100 - 0.12))
+
+                def _mw(e):
+                    c.yview_scroll(int(-1 * (e.delta / 120)), "units")
+                c.bind_all("<MouseWheel>", _mw)
+
+            except ImportError:
+                _lbl(img_outer,
+                     "PIL/Pillow kurulu değil — görüntü gösterilemiyor.\n"
+                     "pip install Pillow", fg=_AMBER, font=_F).pack(pady=20)
+            except Exception as exc:
+                _lbl(img_outer, f"Görüntü hatası: {exc}",
+                     fg=_ACC2, font=_FS).pack(pady=8)
+
+        # ── Arka plan iş parçacığı ──────────────────────────────────
+        def _run():
+            loc = find_word_in_image(thumb_path, word)
+            dlg.after(0, lambda: _show_result(loc))
+
+        def _show_result(loc: dict):
+            if "hata" in loc:
+                status_lbl.configure(
+                    text=f"❌  {loc['hata']}", fg=_ACC2)
+                _display_image(None)
+                return
+            if not loc.get("bulundu", False):
+                status_lbl.configure(
+                    text=f"⚠  '{word}' bu sayfada bulunamadı — "
+                         "transkripsiyon metni doğru ama görüntü belirsiz olabilir.",
+                    fg=_AMBER)
+                explain_lbl.configure(text=loc.get("aciklama", ""))
+                _display_image(None)
+                return
+            konum = loc.get("konum")
+            status_lbl.configure(
+                text=f"✅  '{word}' kırmızı çerçeveyle işaretlendi",
+                fg=_GREEN)
+            explain_lbl.configure(
+                text=f"📍  {loc.get('aciklama', '')}")
+            _display_image(konum)
+
+        dlg.update_idletasks()
+        threading.Thread(target=_run, daemon=True).start()
 
 
 # ══════════════════════════════════════════════════════════════════════════
