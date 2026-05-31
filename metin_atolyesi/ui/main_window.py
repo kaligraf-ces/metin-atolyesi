@@ -189,6 +189,7 @@ class MainWindow(BaseTk):
         menu.add_separator()
         menu.add_command(label="  ⚙  Bağımlılıkları Denetle",   command=self.show_dependencies)
         menu.add_command(label="  ⚡  Claude API Ayarları",      command=self.open_claude_settings)
+        menu.add_command(label="  🤗  HuggingFace Ayarları",     command=self.open_hf_settings)
         menu.add_separator()
         menu.add_command(label="  ✖  Çıkış",                    command=self.on_close)
 
@@ -215,6 +216,9 @@ class MainWindow(BaseTk):
 
         # OCR moduyla başla
         self._set_mode("ocr")
+
+        # GitHub veri reposu — arka planda pull
+        self.after(2000, self._startup_sync)
 
     # -----------------------------------------------------------------------
     # Üç mod çerçevesi inşa metodları
@@ -2360,11 +2364,27 @@ class MainWindow(BaseTk):
         return True
 
     def on_close(self) -> None:
+        # Kapanmadan önce veri reposunu push et
+        try:
+            from metin_atolyesi.core.github_sync import get_sync
+            get_sync().push_now()
+        except Exception:
+            pass
         if not self.dirty:
             self.destroy()
             return
         if self.confirm_unsaved():
             self.destroy()
+
+    def _startup_sync(self) -> None:
+        """Başlangıçta veri reposunu arka planda güncelle."""
+        try:
+            from metin_atolyesi.core.github_sync import get_sync
+            sync = get_sync(on_status=lambda msg: self.status_var.set(msg))
+            if sync.available:
+                sync.pull(blocking=False)
+        except Exception:
+            pass
 
     def show_dependencies(self) -> None:
         lines = []
@@ -2491,6 +2511,110 @@ class MainWindow(BaseTk):
                    command=dlg.destroy).pack(side=tk.RIGHT)
 
         body.columnconfigure(0, weight=1)
+        self.wait_window(dlg)
+
+    # -----------------------------------------------------------------------
+    # HuggingFace ayarları
+    # -----------------------------------------------------------------------
+
+    def open_hf_settings(self) -> None:
+        """HuggingFace token ve kullanıcı adı giriş penceresi."""
+        from metin_atolyesi.core.hf_store import save_hf_config, _load_hf_config
+
+        dlg = tk.Toplevel(self)
+        dlg.title("HuggingFace Ayarları")
+        dlg.geometry("520x440")
+        dlg.minsize(480, 400)
+        dlg.transient(self)
+        dlg.grab_set()
+
+        # Başlık
+        header = tk.Frame(dlg, bg="#ff9500")
+        header.pack(fill=tk.X)
+        tk.Label(header, text="  🤗  HuggingFace Veri Deposu",
+                 bg="#ff9500", fg="white",
+                 font=("Segoe UI", 11, "bold"), pady=10).pack(anchor=tk.W)
+
+        body = ttk.Frame(dlg, padding=16)
+        body.pack(fill=tk.BOTH, expand=True)
+        body.columnconfigure(0, weight=1)
+
+        # Açıklama
+        ttk.Label(body,
+                  text="Orijinal PDF'leri HuggingFace'te saklamak için\n"
+                       "kullanıcı adınızı ve token'ınızı girin.\n"
+                       "Token: huggingface.co/settings/tokens → Write yetkisi",
+                  wraplength=460, justify=tk.LEFT).grid(
+            row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 10))
+
+        ttk.Separator(body).grid(row=1, column=0, columnspan=2,
+                                 sticky=tk.EW, pady=(0, 10))
+
+        cfg = _load_hf_config()
+
+        # Kullanıcı adı
+        ttk.Label(body, text="HuggingFace kullanıcı adı:").grid(
+            row=2, column=0, sticky=tk.W, pady=4)
+        user_var = tk.StringVar(value=cfg.get("username", ""))
+        ttk.Entry(body, textvariable=user_var, width=30).grid(
+            row=3, column=0, sticky=tk.EW, pady=(0, 10))
+
+        # Token
+        ttk.Label(body, text="Access Token (hf_...):").grid(
+            row=4, column=0, sticky=tk.W, pady=4)
+        token_var = tk.StringVar(value=cfg.get("token", ""))
+        token_entry = ttk.Entry(body, textvariable=token_var, width=44, show="•")
+        token_entry.grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4))
+
+        show_var = tk.BooleanVar(value=False)
+        def toggle_show():
+            token_entry.configure(show="" if show_var.get() else "•")
+        ttk.Checkbutton(body, text="Token'ı göster",
+                        variable=show_var, command=toggle_show).grid(
+            row=6, column=0, sticky=tk.W, pady=(0, 10))
+
+        ttk.Separator(body).grid(row=7, column=0, columnspan=2,
+                                 sticky=tk.EW, pady=(0, 10))
+
+        result_var = tk.StringVar(value="")
+        ttk.Label(body, textvariable=result_var,
+                  foreground="#0066aa", font=("Segoe UI", 9)).grid(
+            row=8, column=0, columnspan=2, sticky=tk.W, pady=(0, 8))
+
+        btn_row = ttk.Frame(body)
+        btn_row.grid(row=9, column=0, columnspan=2, sticky=tk.EW)
+
+        def do_test():
+            token = token_var.get().strip()
+            user  = user_var.get().strip()
+            if not token or not user:
+                result_var.set("⚠  Kullanıcı adı ve token gerekli.")
+                return
+            result_var.set("⏳  Test ediliyor…")
+            dlg.update()
+            try:
+                from huggingface_hub import HfApi
+                api  = HfApi(token=token)
+                info = api.whoami()
+                result_var.set(f"✅  Bağlantı başarılı! ({info.get('name', user)})")
+            except Exception as exc:
+                result_var.set(f"❌  {str(exc)[:100]}")
+
+        def do_save():
+            save_hf_config(token_var.get().strip(), user_var.get().strip())
+            # HFStore singleton'ı sıfırla
+            import metin_atolyesi.core.hf_store as _hf
+            _hf._hf_instance = None
+            result_var.set("💾  Kaydedildi.")
+            dlg.after(900, dlg.destroy)
+
+        ttk.Button(btn_row, text="🔗 Bağlantıyı Test Et",
+                   command=do_test).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="💾 Kaydet",
+                   command=do_save).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text="İptal",
+                   command=dlg.destroy).pack(side=tk.RIGHT)
+
         self.wait_window(dlg)
 
     def simple_name_dialog(self, title: str, default: str) -> str | None:
