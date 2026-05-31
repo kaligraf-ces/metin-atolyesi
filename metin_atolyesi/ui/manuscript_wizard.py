@@ -140,9 +140,17 @@ class ManuscriptWizard(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("El Yazması Öğretme Sihirbazı")
-        self.geometry("820x680")
-        self.minsize(760, 580)
         self.configure(bg=_BG)
+        self.resizable(True, True)
+        # Ekranın %80'ini kapla ve ortala
+        _sw = self.winfo_screenwidth()
+        _sh = self.winfo_screenheight()
+        _ww = max(900, int(_sw * 0.80))
+        _wh = max(660, int(_sh * 0.80))
+        _wx = (_sw - _ww) // 2
+        _wy = max(10, (_sh - _wh) // 2)
+        self.geometry(f"{_ww}x{_wh}+{_wx}+{_wy}")
+        self.minsize(800, 600)
         self.transient(parent)
         self.grab_set()
         self._step = 0
@@ -249,6 +257,16 @@ class ManuscriptWizard(tk.Toplevel):
         self._test_word_var = tk.StringVar()
         self._test_all_var  = tk.BooleanVar(value=False)
 
+        # PDF / Sayfa formatı
+        self.pdf_format_var  = tk.StringVar(value="tek")       # "tek" / "cift"
+        self.sayfa_yonu_var  = tk.StringVar(value="dikey")     # "dikey" / "yatay"
+        self.beyit_duzen_var = tk.StringVar(value="yan_yana")  # yan_yana/girintili/hizali
+
+        # Okunabilirlik / Tahribat durumu
+        self.ilk_varak_durum_var = tk.StringVar(value="Tam okunabilir")
+        self.son_varak_durum_var = tk.StringVar(value="Tam okunabilir")
+        self.ic_sayfa_durum_var  = tk.StringVar(value="Tam okunabilir")
+
     # ── Kabuk ────────────────────────────────────────────────────────────
 
     def _build_shell(self):
@@ -268,8 +286,10 @@ class ManuscriptWizard(tk.Toplevel):
             f = tk.Frame(self._bar, bg=_PANEL)
             f.pack(side=tk.LEFT, expand=True, fill=tk.X)
             lbl = tk.Label(f, text=f"{icon} {i+1}. {name}",
-                           bg=_PANEL, fg=_FG2, font=_FS, pady=14)
+                           bg=_PANEL, fg=_FG2, font=_FS, pady=14,
+                           cursor="hand2")
             lbl.pack()
+            lbl.bind("<Button-1>", lambda e, s=i: self._nav_to_step(s))
             self._step_btns.append(lbl)
             if i < len(self.STEPS)-1:
                 tk.Label(self._bar, text="│", bg=_PANEL,
@@ -351,11 +371,20 @@ class ManuscriptWizard(tk.Toplevel):
 
     def _go_back(self):
         if self._step == self._SONUC_STEP:
-            # Sonuç'tan Özet'e geri don — parametreleri değiştirip tekrar öğret
             self._show_step(self._SONUC_STEP - 1)
             return
         if self._step > 0:
             self._show_step(self._step - 1)
+
+    def _nav_to_step(self, n: int):
+        """Adım başlığına tıklanınca doğrudan o adıma git."""
+        # Sonuç adımı sadece öğrenme tamamlanınca erişilebilir
+        if n == self._SONUC_STEP and not self._learning_done:
+            return
+        # Öğrenme devam ediyorken (Özet adımındayken) navigasyonu kilitle
+        if self._step == self._SONUC_STEP - 1 and hasattr(self, "_stop_event"):
+            return
+        self._show_step(n)
 
     def _validate(self) -> bool:
         if self._step == 0:
@@ -421,9 +450,18 @@ class ManuscriptWizard(tk.Toplevel):
                   self.trans_path_var, self._FT_TRANS,
                   "pdf · docx · txt · rtf · odt")
 
+        # Transkripsiyon kaynağı — kütüphaneden seç
+        lib_f = tk.Frame(c1, bg=_CARD)
+        lib_f.pack(anchor=tk.W, padx=14, pady=(0, 4))
+        _lbl(lib_f, "ya da:", bg=_CARD, fg=_FG3, font=_FS).pack(side=tk.LEFT, padx=(0, 8))
+        _btn(lib_f, "📚  Kütüphaneden Seç",
+             self._browse_library_trans, "ghost").pack(side=tk.LEFT, padx=(0, 6))
+        _lbl(lib_f, "(önceden öğrenilmiş bir eserin transkripsiyonunu kullan)",
+             bg=_CARD, fg=_FG3, font=_FS).pack(side=tk.LEFT)
+
         # Kaynak türü
         kt_fr = tk.Frame(c1, bg=_CARD)
-        kt_fr.pack(anchor=tk.W, padx=14, pady=(4, 12))
+        kt_fr.pack(anchor=tk.W, padx=14, pady=(4, 6))
         _lbl(kt_fr, "Kaynak türü:", bg=_CARD, fg=_FG2, font=_FSB).pack(
             side=tk.LEFT, padx=(0, 10))
         for val, lbl_text in [
@@ -436,6 +474,47 @@ class ManuscriptWizard(tk.Toplevel):
                            value=val, bg=_CARD, fg=_FG, font=_FS,
                            selectcolor="#1c2035",
                            activebackground=_CARD).pack(side=tk.LEFT, padx=6)
+
+        # ─ PDF / Sayfa Formatı ─────────────────────────────────────
+        cf = _card(scroll, padx=0, pady=0)
+        cf.pack(fill=tk.X, padx=16, pady=6)
+        _section(cf, "PDF Sayfa Formatı", "📐").pack(fill=tk.X)
+
+        pf = tk.Frame(cf, bg=_CARD)
+        pf.pack(fill=tk.X, padx=14, pady=(8, 4))
+
+        # Tek / çift sayfa
+        pdf_row = tk.Frame(pf, bg=_CARD)
+        pdf_row.pack(anchor=tk.W, pady=(0, 4))
+        _lbl(pdf_row, "PDF düzeni:", bg=_CARD, fg=_FG2, font=_FSB).pack(side=tk.LEFT, padx=(0, 10))
+        for val, txt in [
+            ("tek",  "Tek sayfa (standart)"),
+            ("cift", "Çift sayfa — yatay (kütüphane taraması)"),
+        ]:
+            tk.Radiobutton(pdf_row, text=txt, variable=self.pdf_format_var,
+                           value=val, bg=_CARD, fg=_FG, font=_FS,
+                           selectcolor="#1c2035", activebackground=_CARD,
+                           command=self._toggle_cift_sayfa).pack(side=tk.LEFT, padx=(0, 14))
+
+        # Çift sayfa açıklama paneli (başlangıçta gizli)
+        self._cift_info_lbl = tk.Label(pf,
+            text="ℹ  Sağ sayfa = b (verso), Sol sayfa = a (recto)\n"
+                 "   Örnek açılış: Sağ=83b · Sol=84a  →  Sağ=84b · Sol=85a\n"
+                 "   Program her PDF sayfasını ortadan ikiye bölerek işler.",
+            bg="#0f1929", fg="#7aa8cc", font=_FS,
+            justify=tk.LEFT, padx=10, pady=6, anchor=tk.W)
+        # Başlangıç görünürlüğünü ayarla
+        self._toggle_cift_sayfa()
+
+        # Sayfa yönü
+        yon_row = tk.Frame(pf, bg=_CARD)
+        yon_row.pack(anchor=tk.W, pady=(6, 4))
+        _lbl(yon_row, "Sayfa yönü:", bg=_CARD, fg=_FG2, font=_FSB).pack(side=tk.LEFT, padx=(0, 10))
+        for val, txt in [("dikey", "Dikey (portre)"), ("yatay", "Yatay (peyzaj)")]:
+            tk.Radiobutton(yon_row, text=txt, variable=self.sayfa_yonu_var,
+                           value=val, bg=_CARD, fg=_FG, font=_FS,
+                           selectcolor="#1c2035",
+                           activebackground=_CARD).pack(side=tk.LEFT, padx=(0, 14))
 
         # ─ Eser Kimliği (grid body ayrı frame içinde) ─
         c2 = _card(scroll, padx=0, pady=0)
@@ -478,14 +557,30 @@ class ManuscriptWizard(tk.Toplevel):
                 sticky=tk.W, padx=6, pady=2)
 
         mm_f = tk.Frame(c3, bg=_CARD)
-        mm_f.pack(anchor=tk.W, padx=14, pady=(0, 10))
+        mm_f.pack(anchor=tk.W, padx=14, pady=(0, 6))
         _lbl(mm_f, "Üslup:", bg=_CARD, fg=_FG2, font=_FSB).pack(
             side=tk.LEFT, padx=(0, 10))
         for val in ("Mensur", "Manzum", "Karışık (mensur + manzum)"):
             tk.Radiobutton(mm_f, text=val, variable=self.mensur_manzum_var,
                            value=val, bg=_CARD, fg=_FG, font=_FS,
+                           selectcolor="#1c2035", activebackground=_CARD,
+                           command=self._toggle_beyit).pack(side=tk.LEFT, padx=6)
+
+        # Beyit / mısra satır düzeni (manzum seçilince görünür)
+        self._beyit_frame = tk.Frame(c3, bg=_CARD)
+        bf2 = tk.Frame(self._beyit_frame, bg=_CARD)
+        bf2.pack(anchor=tk.W, padx=14, pady=(0, 8))
+        _lbl(bf2, "Beyit/mısra düzeni:", bg=_CARD, fg=_FG2, font=_FSB).pack(side=tk.LEFT, padx=(0, 10))
+        for val, txt in [
+            ("yan_yana",  "Yan yana (sütun — 1. ve 2. mısra aynı satırda)"),
+            ("girintili", "Alt alta, girintili (2. mısra içeriden)"),
+            ("hizali",    "Alt alta, hizalı (2. mısra bir alt satırda)"),
+        ]:
+            tk.Radiobutton(bf2, text=txt, variable=self.beyit_duzen_var,
+                           value=val, bg=_CARD, fg=_FG, font=_FS,
                            selectcolor="#1c2035",
-                           activebackground=_CARD).pack(side=tk.LEFT, padx=6)
+                           activebackground=_CARD).pack(anchor=tk.W, padx=(16, 0), pady=1)
+        self._toggle_beyit()
 
         # ─ Transkripsiyon İşaretleri ─
         c4 = _card(scroll, padx=0, pady=0)
@@ -762,6 +857,31 @@ class ManuscriptWizard(tk.Toplevel):
 
         self._toggle_duzenli()
 
+        # ─ Okunabilirlik / Tahribat Durumu ─
+        cd = _card(scroll, padx=0, pady=0)
+        cd.pack(fill=tk.X, padx=16, pady=(6, 14))
+        _section(cd, "Okunabilirlik / Tahribat Durumu", "🔍").pack(fill=tk.X)
+
+        tk.Label(cd,
+                 text="Sayfaların okunabilirlik durumunu belirtin — OCR güven eşiğini ayarlamada kullanılır.",
+                 bg=_CARD, fg=_FG2, font=_FS, padx=14, pady=4, anchor=tk.W).pack(fill=tk.X)
+
+        _DURUMLAR = ["Tam okunabilir", "Kısmen okunabilir",
+                     "Tahribatlı (silinme, leke, yırtık)", "Ağır tahribat / eksik yaprak"]
+        df = tk.Frame(cd, bg=_CARD)
+        df.pack(fill=tk.X, padx=14, pady=(0, 12))
+        df.columnconfigure(1, weight=1)
+
+        def _durum_row(r, label, var):
+            _lbl(df, label, bg=_CARD, fg=_FG2, font=_FSB).grid(
+                row=r, column=0, sticky=tk.W, padx=(0, 12), pady=4)
+            _combo(df, var, _DURUMLAR, width=36).grid(
+                row=r, column=1, sticky=tk.W, pady=4)
+
+        _durum_row(0, "İlk varak / kapak:",      self.ilk_varak_durum_var)
+        _durum_row(1, "Son varak / bitiş:",       self.son_varak_durum_var)
+        _durum_row(2, "İç sayfalar (genel):",     self.ic_sayfa_durum_var)
+
     def _toggle_sync(self):
         s = tk.DISABLED if self.sync_var.get() else tk.NORMAL
         for w in self._tr_grp_frame.winfo_children():
@@ -777,6 +897,109 @@ class ManuscriptWizard(tk.Toplevel):
         for w in self._max_frame.winfo_children():
             try: w.configure(state=state)
             except Exception: pass
+
+    def _toggle_cift_sayfa(self):
+        """Çift sayfa PDF seçilince açıklama etiketini göster/gizle."""
+        try:
+            if self.pdf_format_var.get() == "cift":
+                self._cift_info_lbl.pack(fill=tk.X, padx=14, pady=(0, 6))
+            else:
+                self._cift_info_lbl.pack_forget()
+        except Exception:
+            pass
+
+    def _toggle_beyit(self):
+        """Manzum seçilince beyit düzeni seçeneğini göster/gizle."""
+        try:
+            if self.mensur_manzum_var.get() in ("Manzum", "Karışık (mensur + manzum)"):
+                self._beyit_frame.pack(fill=tk.X)
+            else:
+                self._beyit_frame.pack_forget()
+        except Exception:
+            pass
+
+    def _browse_library_trans(self):
+        """Kütüphaneden bir eser seçip transkripsiyonunu kaynak olarak kullan."""
+        lib     = get_library()
+        entries = lib.list_entries()
+        if not entries:
+            messagebox.showinfo("Boş Kütüphane",
+                "Kütüphanede henüz öğrenilmiş eser yok.\n"
+                "Önce bir eser öğretin.", parent=self)
+            return
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Kütüphaneden Transkripsiyon Seç")
+        dlg.configure(bg=_BG)
+        dlg.geometry("640x440")
+        dlg.transient(self)
+        dlg.grab_set()
+
+        tk.Label(dlg,
+                 text="  Transkripsiyon kaynağı olarak kullanılacak eseri seçin.\n"
+                      "  Seçilen eserin öğrenilmiş sayfa metinleri geçici dosyaya aktarılır.",
+                 bg="#0d1117", fg=_FG2, font=_FS, justify=tk.LEFT,
+                 pady=6).pack(fill=tk.X)
+
+        lf = tk.Frame(dlg, bg=_BG)
+        lf.pack(fill=tk.BOTH, expand=True, padx=14, pady=6)
+
+        sb2 = ttk.Scrollbar(lf)
+        lb = tk.Listbox(lf, yscrollcommand=sb2.set,
+                        bg="#1c2035", fg=_FG, font=_F,
+                        selectbackground=_ACC1, activestyle="none",
+                        height=14)
+        sb2.configure(command=lb.yview)
+        sb2.pack(side=tk.RIGHT, fill=tk.Y)
+        lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        for e in entries:
+            m     = e.get("meta", {})
+            pages = len(e.get("pages", []))
+            lb.insert(tk.END,
+                f"  {e.get('eser_adi','?'):<40}"
+                f"  {m.get('alan','?'):<18}"
+                f"  {m.get('donem','?'):<14}"
+                f"  {pages} sayfa")
+
+        def _confirm():
+            sel = lb.curselection()
+            if not sel:
+                messagebox.showwarning("Seçim Yok", "Bir eser seçin.", parent=dlg)
+                return
+            entry = entries[sel[0]]
+
+            # Tüm sayfa metinlerini birleştirip geçici .txt'ye yaz
+            from metin_atolyesi.core.manuscript_library import _lib_dir as _ld, _load_sample_text as _lst
+            texts = []
+            for pg in entry.get("pages", []):
+                t = _lst(pg["hash"])
+                if t:
+                    texts.append(f"=== Sayfa {pg['ms_page']+1} ===\n{t}")
+
+            if not texts:
+                messagebox.showwarning("Boş",
+                    "Bu eserin kaydedilmiş metin verisi yok.", parent=dlg)
+                return
+
+            tmp_dir  = Path.home() / ".metin_atolyesi"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            tmp_path = tmp_dir / f"lib_trans_{entry.get('id','')[:8]}.txt"
+            tmp_path.write_text("\n\n".join(texts), encoding="utf-8")
+
+            self.trans_path_var.set(str(tmp_path))
+            # Eser bilgilerini de doldur
+            self._do_autofill(entry)
+            dlg.destroy()
+            messagebox.showinfo("Hazır",
+                f"'{entry.get('eser_adi')}' transkripsiyonu kaynak olarak ayarlandı.\n"
+                f"({len(texts)} sayfa — {tmp_path.name})",
+                parent=self)
+
+        bf3 = tk.Frame(dlg, bg=_BG)
+        bf3.pack(fill=tk.X, padx=14, pady=(4, 12))
+        _btn(bf3, "✓  Seç ve Kullan", _confirm,    "primary").pack(side=tk.LEFT)
+        _btn(bf3, "İptal",             dlg.destroy, "ghost").pack(side=tk.RIGHT)
 
     # ════════════════════════════════════════════════════════════════
     #  ADIM 3 — İmla Hususiyetleri
@@ -1385,8 +1608,14 @@ class ManuscriptWizard(tk.Toplevel):
                  "dosyalar":   r.get("dosyalar",[])}
                 for r in self._trans_rows if r["isaret"].get()
             ],
-            varak_baslangic = self.varak_baslangic_var.get().strip(),
-            varak_bitis     = self.varak_bitis_var.get().strip(),
+            varak_baslangic  = self.varak_baslangic_var.get().strip(),
+            varak_bitis      = self.varak_bitis_var.get().strip(),
+            pdf_format       = self.pdf_format_var.get(),
+            sayfa_yonu       = self.sayfa_yonu_var.get(),
+            beyit_duzen      = self.beyit_duzen_var.get(),
+            ilk_varak_durum  = self.ilk_varak_durum_var.get(),
+            son_varak_durum  = self.son_varak_durum_var.get(),
+            ic_sayfa_durum   = self.ic_sayfa_durum_var.get(),
             metin_baslangic = self.metin_bas_var.get(),
             metin_bitis     = self.metin_bit_var.get(),
             imla_secimler   = [k for k, v in self.imla_vars.items() if v.get()],
@@ -1722,6 +1951,14 @@ class ManuscriptWizard(tk.Toplevel):
                     dil_gorunum_etiket = etk
                     break
             self.dil_var.set(dil_gorunum_etiket)
+
+            # ── PDF / Sayfa formatı ──────────────────────────────────
+            self.pdf_format_var.set(meta.get("pdf_format", "tek"))
+            self.sayfa_yonu_var.set(meta.get("sayfa_yonu", "dikey"))
+            self.beyit_duzen_var.set(meta.get("beyit_duzen", "yan_yana"))
+            self.ilk_varak_durum_var.set(meta.get("ilk_varak_durum", "Tam okunabilir"))
+            self.son_varak_durum_var.set(meta.get("son_varak_durum", "Tam okunabilir"))
+            self.ic_sayfa_durum_var.set(meta.get("ic_sayfa_durum", "Tam okunabilir"))
 
             # ── Kelime yoğunluğu ────────────────────────────────────
             ky = meta.get("kelime_yogunlugu", {})

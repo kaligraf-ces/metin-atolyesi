@@ -255,6 +255,17 @@ class ManuscriptMeta:
     varak_baslangic: str = ""   # PDF sayfa 1 = hangi varak (örn. "85b")
     varak_bitis:     str = ""   # son sayfa = hangi varak (örn. "212a")
 
+    # ── PDF / Sayfa formatı ──────────────────────────────────────────
+    pdf_format:      str = "tek"        # "tek" | "cift" (yatay çift sayfalı tarama)
+    # Çift sayfada sağ = b (Nb), sol = a (N+1 a) — standart Osmanlı açılışı
+    sayfa_yonu:      str = "dikey"      # "dikey" (portre) | "yatay" (peyzaj)
+    beyit_duzen:     str = "yan_yana"   # "yan_yana" | "girintili" | "hizali"
+
+    # ── Okunabilirlik / Tahribat ─────────────────────────────────────
+    ilk_varak_durum: str = "Tam okunabilir"   # ilk varak/kapak durumu
+    son_varak_durum: str = "Tam okunabilir"   # son varak durumu
+    ic_sayfa_durum:  str = "Tam okunabilir"   # iç sayfaların genel durumu
+
     # ── Kaynak yapısı ────────────────────────────────────────────────
     metin_baslangic:  int  = 0
     metin_bitis:      int  = 0
