@@ -269,6 +269,9 @@ class ManuscriptMeta:
     # ── Kaynak yapısı ────────────────────────────────────────────────
     metin_baslangic:  int  = 0
     metin_bitis:      int  = 0
+    # Transkripsiyonun kapsadığı varak/satır aralığı (örn. "25b/7" – "48a/12")
+    trans_varak_bas:  str  = ""   # transkripsiyonun ilk satırı
+    trans_varak_bit:  str  = ""   # transkripsiyonun son satırı
     metin_bolumleri:  list[MetinBolumu] = field(default_factory=list)
     kaynak_turu:      str = "transkripsiyon"
 

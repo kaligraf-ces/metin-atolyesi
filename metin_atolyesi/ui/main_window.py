@@ -36,6 +36,7 @@ class MainWindow(BaseTk):
         self.title(APP_DISPLAY_NAME)
         self.geometry("1320x820")
         self.minsize(980, 620)
+        self.after(0, lambda: self.state("zoomed"))   # tam ekran başlat
         self.project: Project = create_project("Metin Atolyesi")
         self.dirty = False
         self.preview_image: ImageTk.PhotoImage | None = None

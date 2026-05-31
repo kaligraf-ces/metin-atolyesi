@@ -45,6 +45,139 @@ _FS     = ("Segoe UI", 9)
 _FSB    = ("Segoe UI", 9, "bold")
 
 
+# ── Sembolik ikon çizimleri ───────────────────────────────────────────────
+
+def _sayfa_ikon(parent, tip: str, etiket: str):
+    """Sayfa formatı sembolik ikonu (Canvas)."""
+    W, H = 62, 46
+    c = tk.Canvas(parent, width=W, height=H, bg=_PANEL,
+                  highlightthickness=1, highlightbackground=_BORDER)
+    c.pack(side=tk.LEFT, padx=6)
+    if tip == "tek_dikey":
+        c.create_rectangle(16, 3, 46, 40, outline=_FG2, fill=_CARD, width=1)
+        for y in range(9, 38, 6):
+            c.create_line(20, y, 42, y, fill=_FG3, width=1)
+    elif tip == "tek_yatay":
+        c.create_rectangle(5, 12, 57, 34, outline=_FG2, fill=_CARD, width=1)
+        for x in range(11, 54, 10):
+            c.create_line(x, 16, x, 30, fill=_FG3, width=1)
+    elif tip == "cift_yatay":
+        # İki sayfa yan yana
+        c.create_rectangle(2, 5, 29, 40, outline=_FG2, fill=_CARD, width=1)
+        c.create_rectangle(33, 5, 60, 40, outline=_FG2, fill=_CARD, width=1)
+        for y in range(11, 38, 7):
+            c.create_line(5, y, 26, y, fill=_FG3, width=1)
+            c.create_line(36, y, 57, y, fill=_FG3, width=1)
+        # b / a etiket
+        c.create_text(15, 43, text="b", fill=_FG3, font=("Segoe UI", 7))
+        c.create_text(46, 43, text="a", fill=_FG3, font=("Segoe UI", 7))
+    tk.Label(parent, text=etiket, bg=_CARD, fg=_FG3,
+             font=("Segoe UI", 7)).pack(side=tk.LEFT, padx=(0, 8))
+
+
+def _beyit_ikon(parent, tip: str, etiket: str):
+    """Beyit satır düzeni sembolik ikonu (Canvas)."""
+    W, H = 80, 44
+    c = tk.Canvas(parent, width=W, height=H, bg=_PANEL,
+                  highlightthickness=1, highlightbackground=_BORDER)
+    c.pack(side=tk.LEFT, padx=6)
+    if tip == "yan_yana":
+        # Dikey ayraç + iki sütun
+        c.create_line(40, 5, 40, 39, fill=_FG3, dash=(3, 2))
+        for y in (12, 22, 32):
+            c.create_line(4, y, 36, y, fill=_ACC1, width=2)
+            c.create_line(44, y, 76, y, fill=_FG2, width=1)
+    elif tip == "girintili":
+        # 1. mısra sola, 2. mısra girintili
+        for i, (x1, x2, y, clr) in enumerate([
+            (4, 60, 10, _ACC1), (16, 72, 20, _FG2),
+            (4, 60, 32, _ACC1), (16, 72, 42, _FG2)
+        ]):
+            c.create_line(x1, y, x2, y, fill=clr, width=2 if clr==_ACC1 else 1)
+    elif tip == "hizali":
+        # İki mısra hizalı alt alta
+        for y, clr in [(10, _ACC1), (20, _FG2), (32, _ACC1), (42, _FG2)]:
+            c.create_line(4, y, 66, y, fill=clr, width=2 if clr==_ACC1 else 1)
+    tk.Label(parent, text=etiket, bg=_CARD, fg=_FG3,
+             font=("Segoe UI", 7)).pack(side=tk.LEFT, padx=(0, 8))
+
+
+# ── Çeviri yazı karakterleri ──────────────────────────────────────────────
+
+_CEVIRI_YAZI = [
+    # Uzun ünlüler
+    "ā", "ī", "ū",
+    # Klasik çeviri yazı ünsüzleri
+    "ḥ", "ḫ", "ṭ", "ẓ", "ḳ", "ġ", "ś", "ẕ", "ṣ", "ḍ",
+    # Hemze / ayn
+    "ʿ", "ʾ",
+    # Nazal
+    "ñ", "ŋ",
+    # Diğer
+    "š", "č",
+    # Eski imlada yaygın
+    "â", "î", "û",
+]
+
+_ARAP_HARFLERI = list(
+    "ا ب پ ت ث ج چ ح خ د ذ ر ز ژ س ش ص ض ط ظ ع غ ف ق ك گ ل م ن و ه ی ة ء".split()
+)
+
+def _insert_to_focused(widget_root, char: str):
+    """Odaklanmış Entry veya Text widget'ına karakter ekle."""
+    try:
+        w = widget_root.focus_get()
+        if isinstance(w, tk.Entry):
+            pos = w.index(tk.INSERT)
+            w.insert(pos, char)
+        elif isinstance(w, tk.Text):
+            w.insert(tk.INSERT, char)
+    except Exception:
+        pass
+
+
+def _ceviri_yazi_panel(parent, widget_root):
+    """Çeviri yazı işaretleri ve Arap harfleri tıklanabilir paneli."""
+    frm = tk.Frame(parent, bg=_PANEL,
+                   highlightbackground=_BORDER, highlightthickness=1)
+    frm.pack(fill=tk.BOTH, expand=True)
+
+    # Başlık
+    tk.Label(frm, text="Çeviri Yazı İşaretleri",
+             bg=_PANEL, fg=_FG2, font=_FSB).pack(anchor=tk.W, padx=6, pady=(6,2))
+
+    # Latin/transliterasyon karakterleri — 6 sütunlu grid
+    lat_f = tk.Frame(frm, bg=_PANEL)
+    lat_f.pack(fill=tk.X, padx=6, pady=2)
+    for i, ch in enumerate(_CEVIRI_YAZI):
+        tk.Button(lat_f, text=ch, width=3, height=1,
+                  font=("Segoe UI", 11),
+                  bg="#1c2035", fg=_FG,
+                  activebackground=_ACC1, activeforeground="white",
+                  relief=tk.FLAT, bd=0,
+                  command=lambda c=ch: _insert_to_focused(widget_root, c)
+                  ).grid(row=i // 6, column=i % 6, padx=2, pady=1, sticky=tk.EW)
+
+    # Ayraç
+    tk.Frame(frm, bg=_BORDER, height=1).pack(fill=tk.X, padx=6, pady=4)
+    tk.Label(frm, text="Arap Harfleri",
+             bg=_PANEL, fg=_FG2, font=_FSB).pack(anchor=tk.W, padx=6, pady=(0,2))
+
+    # Arap harfleri — 8 sütunlu grid
+    ar_f = tk.Frame(frm, bg=_PANEL)
+    ar_f.pack(fill=tk.X, padx=6, pady=2)
+    for i, ch in enumerate(_ARAP_HARFLERI):
+        tk.Button(ar_f, text=ch, width=3, height=1,
+                  font=("Segoe UI", 13),
+                  bg="#1c2035", fg="#c5b8a0",
+                  activebackground=_ACC1, activeforeground="white",
+                  relief=tk.FLAT, bd=0,
+                  command=lambda c=ch: _insert_to_focused(widget_root, c)
+                  ).grid(row=i // 8, column=i % 8, padx=2, pady=1, sticky=tk.EW)
+
+    return frm
+
+
 # ── Widget yardımcıları ───────────────────────────────────────────────────
 
 def _lbl(p, text, font=None, fg=None, bg=None, **kw):
@@ -252,6 +385,10 @@ class ManuscriptWizard(tk.Toplevel):
         # Sonuç adımı
         self._last_entry_id: str = ""
         self._learning_done: bool = False
+
+        # Transkripsiyon varak/satır aralığı
+        self.trans_varak_bas_var = tk.StringVar()   # örn. "25b/7"
+        self.trans_varak_bit_var = tk.StringVar()   # örn. "48a/12"
 
         # Adım 7 — Öğrenme testi
         self._test_word_var = tk.StringVar()
@@ -506,7 +643,7 @@ class ManuscriptWizard(tk.Toplevel):
         # Başlangıç görünürlüğünü ayarla
         self._toggle_cift_sayfa()
 
-        # Sayfa yönü
+        # Sayfa yönü + sembolik ikonlar
         yon_row = tk.Frame(pf, bg=_CARD)
         yon_row.pack(anchor=tk.W, pady=(6, 4))
         _lbl(yon_row, "Sayfa yönü:", bg=_CARD, fg=_FG2, font=_FSB).pack(side=tk.LEFT, padx=(0, 10))
@@ -515,6 +652,13 @@ class ManuscriptWizard(tk.Toplevel):
                            value=val, bg=_CARD, fg=_FG, font=_FS,
                            selectcolor="#1c2035",
                            activebackground=_CARD).pack(side=tk.LEFT, padx=(0, 14))
+
+        # Sembolik sayfa format ikonları
+        icon_row = tk.Frame(pf, bg=_CARD)
+        icon_row.pack(anchor=tk.W, pady=(2, 6))
+        _sayfa_ikon(icon_row, "tek_dikey",  "Tek · Dikey")
+        _sayfa_ikon(icon_row, "tek_yatay",  "Tek · Yatay")
+        _sayfa_ikon(icon_row, "cift_yatay", "Çift · Yatay (sağ=b, sol=a)")
 
         # ─ Eser Kimliği (grid body ayrı frame içinde) ─
         c2 = _card(scroll, padx=0, pady=0)
@@ -580,6 +724,14 @@ class ManuscriptWizard(tk.Toplevel):
                            value=val, bg=_CARD, fg=_FG, font=_FS,
                            selectcolor="#1c2035",
                            activebackground=_CARD).pack(anchor=tk.W, padx=(16, 0), pady=1)
+
+        # Sembolik beyit ikonları
+        bi_row = tk.Frame(self._beyit_frame, bg=_CARD)
+        bi_row.pack(anchor=tk.W, padx=14, pady=(0, 8))
+        _beyit_ikon(bi_row, "yan_yana",  "Yan yana")
+        _beyit_ikon(bi_row, "girintili", "Girintili")
+        _beyit_ikon(bi_row, "hizali",    "Hizalı")
+
         self._toggle_beyit()
 
         # ─ Transkripsiyon İşaretleri ─
@@ -857,6 +1009,29 @@ class ManuscriptWizard(tk.Toplevel):
 
         self._toggle_duzenli()
 
+        # ─ Transkripsiyon Kapsam Aralığı ─
+        ctr = _card(scroll, padx=0, pady=0)
+        ctr.pack(fill=tk.X, padx=16, pady=(4, 4))
+        _section(ctr, "Transkripsiyon Kapsam Aralığı (Varak / Satır)", "📌").pack(fill=tk.X)
+
+        tk.Label(ctr,
+                 text="Bazı çalışmalar yazmanın sadece belirli varaklarını kapsar.\n"
+                      "Transkripsiyonun başladığı ve bittiği varak/satır numarasını "
+                      "belirtin (örn. 25b/7 – 48a/12).\n"
+                      "Bu bilgi yazma görseli ile metin eşleştirmesini doğru yapar.",
+                 bg=_CARD, fg=_FG2, font=_FS,
+                 justify=tk.LEFT, padx=14, pady=4, anchor=tk.W).pack(fill=tk.X)
+
+        vr_row = tk.Frame(ctr, bg=_CARD)
+        vr_row.pack(anchor=tk.W, padx=14, pady=(0, 10))
+        _lbl(vr_row, "Başlangıç (varak/satır):", bg=_CARD, fg=_FG2, font=_FSB).pack(side=tk.LEFT, padx=(0,6))
+        _entry(vr_row, self.trans_varak_bas_var, width=10).pack(side=tk.LEFT)
+        tk.Label(vr_row, text=" — ", bg=_CARD, fg=_FG2, font=_F).pack(side=tk.LEFT, padx=4)
+        _lbl(vr_row, "Bitiş (varak/satır):", bg=_CARD, fg=_FG2, font=_FSB).pack(side=tk.LEFT, padx=(0,6))
+        _entry(vr_row, self.trans_varak_bit_var, width=10).pack(side=tk.LEFT)
+        tk.Label(vr_row, text=" örn: 25b/7 — 48a/12",
+                 bg=_CARD, fg=_FG3, font=_FS).pack(side=tk.LEFT, padx=8)
+
         # ─ Okunabilirlik / Tahribat Durumu ─
         cd = _card(scroll, padx=0, pady=0)
         cd.pack(fill=tk.X, padx=16, pady=(6, 14))
@@ -1013,39 +1188,46 @@ class ManuscriptWizard(tk.Toplevel):
             c.pack(fill=tk.X, padx=16, pady=4)
             _section(c, grp_name, "☑").pack(fill=tk.X)
 
-            for item in items:
+            # ─ 2 sütun grid: her item için checkbox + scale yan yana ─
+            grid_f = tk.Frame(c, bg=_CARD)
+            grid_f.pack(fill=tk.X, padx=10, pady=(4, 8))
+            grid_f.columnconfigure(0, weight=1)
+            grid_f.columnconfigure(1, weight=1)
+
+            def _make_cmd(lbl):
+                return lambda x: lbl.configure(
+                    text=f"{int(float(x)):3d}%",
+                    fg=(_FG3 if int(float(x)) == 0 else
+                        _ACC1 if int(float(x)) < 60 else _GREEN))
+
+            for idx, item in enumerate(items):
                 bool_var  = self.imla_vars[item]
                 skala_var = self.imla_skala_vars[item]
+                row_g = idx // 2
+                col_g = idx % 2
 
-                rf = tk.Frame(c, bg=_CARD)
-                rf.pack(fill=tk.X, padx=10, pady=1)
+                cell = tk.Frame(grid_f, bg=_CARD,
+                                highlightbackground=_BORDER, highlightthickness=0)
+                cell.grid(row=row_g, column=col_g,
+                          sticky=tk.EW, padx=(0, 4), pady=1)
 
-                # Checkbox + metin
-                cb = tk.Checkbutton(rf, text=item, variable=bool_var,
-                                    bg=_CARD, fg=_FG, font=_FS,
-                                    selectcolor="#1c2035", activebackground=_CARD,
-                                    wraplength=300, justify=tk.LEFT, anchor=tk.W,
-                                    width=38)
-                cb.pack(side=tk.LEFT)
+                # Checkbox (metin solda, genişler)
+                tk.Checkbutton(cell, text=item, variable=bool_var,
+                               bg=_CARD, fg=_FG, font=_FS,
+                               selectcolor="#1c2035", activebackground=_CARD,
+                               wraplength=240, justify=tk.LEFT, anchor=tk.W
+                               ).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-                # Değer etiketi
-                val_lbl = tk.Label(rf, text=f"{skala_var.get():3d}%",
-                                   bg=_CARD, fg=_ACC1, font=_FSB, width=5)
-                val_lbl.pack(side=tk.RIGHT, padx=(0,4))
-
-                # Slider 0-100
-                def _make_cmd(lbl, v):
-                    return lambda x: lbl.configure(
-                        text=f"{int(float(x)):3d}%",
-                        fg=(_FG3 if int(float(x))==0 else
-                            _ACC1 if int(float(x))<60 else _GREEN))
-
-                tk.Scale(rf, variable=skala_var, from_=0, to=100,
-                         orient=tk.HORIZONTAL, length=180,
+                # % etiketi + kısa scale — her zaman checkbox yanında
+                val_lbl = tk.Label(cell, text=f"{skala_var.get():3d}%",
+                                   bg=_CARD, fg=_ACC1, font=_FSB, width=4)
+                val_lbl.pack(side=tk.RIGHT, padx=(0, 2))
+                tk.Scale(cell, variable=skala_var, from_=0, to=100,
+                         orient=tk.HORIZONTAL, length=120,
                          bg=_CARD, fg=_FG, troughcolor=_PANEL,
                          highlightthickness=0, showvalue=False,
-                         command=_make_cmd(val_lbl, skala_var)
-                         ).pack(side=tk.RIGHT, padx=(0,4))
+                         command=_make_cmd(val_lbl)
+                         ).pack(side=tk.RIGHT, padx=(0, 2))
 
         # Serbest metin
         c2 = _card(scroll, padx=0, pady=0)
@@ -1205,34 +1387,46 @@ class ManuscriptWizard(tk.Toplevel):
                      text=f"%{int(float(v)*100)}")
                  ).pack(side=tk.LEFT)
 
-        # Harf formları (temel)
+        # Harf formları — sol: tablo, sağ: çeviri yazı klavyesi
         c2 = _card(scroll, padx=0, pady=0)
         c2.pack(fill=tk.X, padx=16, pady=6)
         _section(c2, "Harf Formları (Paleografi Notu)", "حـ").pack(fill=tk.X)
 
-        hf_info = tk.Label(c2,
-                           text="Yazmanın tanıtımında/tezinde harf biçimlerine dair bilgi varsa girebilirsiniz.\n"
-                                "Harf · Konum (baş/orta/son) · Örnek kelime · Açıklama",
-                           bg=_CARD, fg=_FG2, font=_FS,
-                           justify=tk.LEFT, anchor=tk.W, padx=12, pady=6)
-        hf_info.pack(fill=tk.X)
+        # İki sütun: sol = tablo, sağ = klavye
+        hf_outer = tk.Frame(c2, bg=_CARD)
+        hf_outer.pack(fill=tk.X, padx=4, pady=4)
 
-        # Sütun başlıkları
-        hch = tk.Frame(c2, bg=_CARD)
-        hch.pack(fill=tk.X, padx=12, pady=(0,2))
-        for txt, w in [("Harf",6),("Konum",10),("Örnek Kelime",14),
-                       ("Açıklama",22),("Görüntüler",9),("",4)]:
+        # Sol: tablo
+        hf_left = tk.Frame(hf_outer, bg=_CARD)
+        hf_left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(8, 4))
+
+        tk.Label(hf_left,
+                 text="Yazmanın tanıtımında/tezinde harf biçimlerine dair bilgi "
+                      "varsa girebilirsiniz.  Harf · Konum · Örnek kelime · Açıklama",
+                 bg=_CARD, fg=_FG2, font=_FS,
+                 justify=tk.LEFT, anchor=tk.W, pady=4).pack(fill=tk.X)
+
+        hch = tk.Frame(hf_left, bg=_CARD)
+        hch.pack(fill=tk.X, pady=(0, 2))
+        for txt, w in [("Harf", 6), ("Konum", 10), ("Örnek Kelime", 14),
+                       ("Açıklama", 20), ("Görüntüler", 9), ("", 4)]:
             tk.Label(hch, text=txt, bg=_CARD, fg=_FG3, font=_FSB,
                      width=w, anchor=tk.W).pack(side=tk.LEFT, padx=2)
 
-        self._harf_frame = tk.Frame(c2, bg=_CARD)
-        self._harf_frame.pack(fill=tk.X, padx=12, pady=4)
+        self._harf_frame = tk.Frame(hf_left, bg=_CARD)
+        self._harf_frame.pack(fill=tk.X, pady=2)
 
         for row in self._harf_rows:
             self._render_harf_row(row)
 
-        _btn(c2, "➕  Harf Formu Ekle",
-             self._add_harf, "ghost").pack(anchor=tk.W, padx=12, pady=(4,10))
+        _btn(hf_left, "➕  Harf Formu Ekle",
+             self._add_harf, "ghost").pack(anchor=tk.W, pady=(4, 8))
+
+        # Sağ: çeviri yazı / Arap harfleri klavyesi
+        hf_right = tk.Frame(hf_outer, bg=_PANEL, width=200)
+        hf_right.pack(side=tk.RIGHT, fill=tk.Y, padx=(4, 8), pady=4)
+        hf_right.pack_propagate(False)
+        _ceviri_yazi_panel(hf_right, self)
 
         # ─ Kelime Yoğunluğu ─
         cw = _card(scroll, padx=0, pady=0)
@@ -1616,8 +1810,10 @@ class ManuscriptWizard(tk.Toplevel):
             ilk_varak_durum  = self.ilk_varak_durum_var.get(),
             son_varak_durum  = self.son_varak_durum_var.get(),
             ic_sayfa_durum   = self.ic_sayfa_durum_var.get(),
-            metin_baslangic = self.metin_bas_var.get(),
-            metin_bitis     = self.metin_bit_var.get(),
+            metin_baslangic  = self.metin_bas_var.get(),
+            metin_bitis      = self.metin_bit_var.get(),
+            trans_varak_bas  = self.trans_varak_bas_var.get().strip(),
+            trans_varak_bit  = self.trans_varak_bit_var.get().strip(),
             imla_secimler   = [k for k, v in self.imla_vars.items() if v.get()],
             imla_skalalar   = {k: v.get() for k, v in self.imla_skala_vars.items()
                                if self.imla_vars[k].get()},
@@ -1988,6 +2184,8 @@ class ManuscriptWizard(tk.Toplevel):
                 })
             self.metin_bas_var.set(meta.get("metin_baslangic", 0))
             self.metin_bit_var.set(meta.get("metin_bitis", 0))
+            self.trans_varak_bas_var.set(meta.get("trans_varak_bas", ""))
+            self.trans_varak_bit_var.set(meta.get("trans_varak_bit", ""))
 
         finally:
             self._autofill_in_progress = False
@@ -2222,25 +2420,64 @@ class ManuscriptWizard(tk.Toplevel):
             tk.Label(ctx_f, text=suf,
                      bg="#1c2035", fg=_FG2, font=_FS).pack(side=tk.LEFT)
 
-            # Sağ: görüntüde bul butonu
-            if res["has_img"]:
-                _btn(rf, "📍  Yazmada Göster",
-                     lambda r=res, w=word: self._show_word_in_image(r, w),
-                     "primary").pack(side=tk.RIGHT, padx=6, pady=3)
-            else:
-                tk.Label(rf, text="(görüntü yok)", bg="#1c2035",
-                         fg=_FG3, font=_FS).pack(side=tk.RIGHT, padx=8)
+            # Sağ: görüntüde bul — her zaman göster, yoksa dialog içinde seç
+            _btn(rf, "📍  Yazmada Göster",
+                 lambda r=res, w=word: self._show_word_in_image(r, w),
+                 "primary" if res["has_img"] else "ghost"
+                 ).pack(side=tk.RIGHT, padx=6, pady=3)
 
     def _show_word_in_image(self, result: dict, word: str):
         """Claude Vision ile kelimeyi görüntüde bul, kırmızı çerçeveyle göster."""
-        from metin_atolyesi.core.manuscript_library import _lib_dir
+        from metin_atolyesi.core.manuscript_library import (
+            _lib_dir, _extract_page_thumbnail, _save_sample, _read_jsonl, _index_path)
         from metin_atolyesi.core.claude_ocr import find_word_in_image
 
         thumb_path = _lib_dir() / "samples" / f"{result['hash']}.jpg"
+
+        # Thumbnail yoksa — ms_pdf'den anlık çıkarmayı dene
         if not thumb_path.exists():
-            messagebox.showwarning("Görüntü Yok",
-                "Bu sayfanın kaydedilmiş görüntüsü bulunamadı.", parent=self)
-            return
+            ms_pdf_path = ""
+            for e in _read_jsonl(_index_path()):
+                if e.get("id") == result.get("entry_id"):
+                    ms_pdf_path = e.get("ms_pdf", "")
+                    break
+
+            if ms_pdf_path and Path(ms_pdf_path).exists():
+                img_bytes = _extract_page_thumbnail(
+                    Path(ms_pdf_path), result["ms_page"])
+                if img_bytes:
+                    _save_sample(result["hash"], img_bytes, "")
+
+            # Hâlâ yoksa — kullanıcıdan dosya seç
+            if not thumb_path.exists():
+                chosen = filedialog.askopenfilename(
+                    parent=self,
+                    title=f"S.{result['ms_page']+1} için el yazması görüntüsünü seçin",
+                    filetypes=[
+                        ("Görüntü", "*.jpg *.jpeg *.png *.tif *.tiff *.bmp *.webp"),
+                        ("PDF",     "*.pdf"),
+                        ("Tüm",     "*.*"),
+                    ],
+                )
+                if not chosen:
+                    return
+                chosen_p = Path(chosen)
+                if chosen_p.suffix.lower() == ".pdf":
+                    img_bytes = _extract_page_thumbnail(chosen_p, 0)
+                    if img_bytes:
+                        _save_sample(result["hash"], img_bytes, "")
+                else:
+                    # Doğrudan görüntü → kopyala
+                    from PIL import Image as _PIL
+                    import io as _io
+                    buf = _io.BytesIO()
+                    _PIL.open(chosen).convert("RGB").save(buf, "JPEG", quality=88)
+                    _save_sample(result["hash"], buf.getvalue(), "")
+
+            if not thumb_path.exists():
+                messagebox.showerror("Görüntü Alınamadı",
+                    "Seçilen dosyadan görüntü oluşturulamadı.", parent=self)
+                return
 
         # ── Dialog ──────────────────────────────────────────────────
         dlg = tk.Toplevel(self)
