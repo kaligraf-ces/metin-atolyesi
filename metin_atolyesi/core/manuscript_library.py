@@ -60,6 +60,33 @@ YAZI_TURLERI = [
 
 HAREKE_DURUMLARI = ["Tam harekeli", "Kısmen harekeli", "Harekesiz"]
 
+# İçerik türleri
+ICERIK_TURLERI = [
+    "İlmihal",        "Tefsir",         "Hadis / Sünnet",
+    "Fıkıh",          "Akaid / Kelam",  "Tasavvuf / Tarikat",
+    "Tarih / Siyer",  "Coğrafya",       "Divan / Şiir",
+    "Hikaye / Kıssa", "Meal / Tercüme", "Tıp / Fen / Felsefe",
+    "Gramer / Sözlük","Mektup / Arşiv", "Diğer",
+]
+
+# Yazı sistemi / Dil kodu açıklamalı etiketler
+# Görüntü etiketi → OCR dil kodu
+DIL_GORUNUM: dict[str, str] = {
+    "Osmanlıca  —  Arap harfli Türkçe":        "tur+ara",
+    "Arapça  —  Arap harfli, Arap dili":       "ara",
+    "Farsça  —  Arap harfli, Farsça":          "fas",
+    "Çağatayca / Orta Türkçe  —  Arap harfli": "tur+ara",
+    "Türkçe  —  Latin harfli (modern)":        "tur",
+    "Türkçe + İngilizce  —  Latin harfli":     "tur+eng",
+    "Almanca":                                  "deu",
+    "İngilizce":                                "eng",
+}
+DIL_GORUNUM_LISTE = list(DIL_GORUNUM.keys())
+# Ters çevirme: kod → ilk eşleşen görüntü etiketi
+_KOD_TO_GORUNUM: dict[str, str] = {}
+for _lbl, _kod in DIL_GORUNUM.items():
+    _KOD_TO_GORUNUM.setdefault(_kod, _lbl)
+
 # İmla hususiyetleri seçenekleri (kategorili)
 IMLA_OZELLIKLERI: dict[str, list[str]] = {
     "Ünlü Yazımı": [
@@ -156,11 +183,11 @@ class MetinBolumu:
 @dataclass
 class HarfFormu:
     """Paleografik harf formu kaydı."""
-    harf:         str = ""   # Arap harfi / transliterasyon
-    konum:        str = ""   # baş / orta / son / bağımsız
-    ornek_kelime: str = ""   # örnek kelime
-    aciklama:     str = ""   # açıklama notu
-    # Görüntü ayrı dosyada: samples/[hash]_harf_[harf]_[konum].jpg
+    harf:           str       = ""   # Arap harfi / transliterasyon
+    konum:          str       = ""   # baş / orta / son / bağımsız
+    ornek_kelime:   str       = ""   # örnek kelime
+    aciklama:       str       = ""   # açıklama notu
+    goruntu_yollar: list[str] = field(default_factory=list)  # görüntü dosya yolları
 
 
 @dataclass
@@ -191,9 +218,16 @@ class ManuscriptMeta:
     imla_serbest:    str       = ""                            # serbest metin
     aktarim_ilkeleri: str      = ""                            # transkripsiyon kuralları
 
+    # ── İçerik bilgisi ───────────────────────────────────────────────
+    icerik_turleri:   list[str] = field(default_factory=list)  # ilmihal, tefsir vb.
+    mensur_manzum:    str       = "Mensur"                     # Mensur / Manzum / Karışık
+    trans_isaretleri: list[dict] = field(default_factory=list) # [{isaret, karsilik}]
+
     # ── Kaynak yapısı ────────────────────────────────────────────────
-    metin_bolumleri: list[MetinBolumu] = field(default_factory=list)
-    kaynak_turu:     str = "transkripsiyon"  # transkripsiyon / tez / baskı / dijital
+    metin_baslangic:  int  = 0    # ana metin başlangıç sayfası
+    metin_bitis:      int  = 0    # ana metin bitiş sayfası
+    metin_bolumleri:  list[MetinBolumu] = field(default_factory=list)
+    kaynak_turu:      str = "transkripsiyon"
 
     # ── Paleografi ───────────────────────────────────────────────────
     harf_formlari:   list[HarfFormu] = field(default_factory=list)
@@ -360,7 +394,7 @@ class ManuscriptLibrary:
                     meta.toplam_ornek        = done
                     record["meta"]["toplam_ornek"] = done
                     _append_jsonl(_index_path(), record)
-                return done, False
+                return done, False, entry_id
 
             # ── Mola sinyali ────────────────────────────────────────
             if pause_event:
@@ -390,7 +424,7 @@ class ManuscriptLibrary:
         # Tüm sayfalar tamamlandı
         record["meta"] = self._meta_to_dict(meta)
         _append_jsonl(_index_path(), record)
-        return done, True
+        return done, True, entry_id
 
     @staticmethod
     def _meta_to_dict(meta: ManuscriptMeta) -> dict:

@@ -17,8 +17,9 @@ def _fmt_dur(secs: float) -> str:
     return f"{s} sn"
 
 from metin_atolyesi.core.manuscript_library import (
-    ALANLAR, DONEMLER, HAREKE_DURUMLARI, IMLA_OZELLIKLERI,
-    METIN_BOLUMLERI, YAZI_TURLERI,
+    ALANLAR, DONEMLER, HAREKE_DURUMLARI, ICERIK_TURLERI,
+    IMLA_OZELLIKLERI, METIN_BOLUMLERI, YAZI_TURLERI,
+    DIL_GORUNUM, DIL_GORUNUM_LISTE,
     HarfFormu, ManuscriptMeta, MetinBolumu, VarakSatirBilgisi,
     get_library,
 )
@@ -131,7 +132,10 @@ class ManuscriptWizard(tk.Toplevel):
         ("📑", "Yapı"),
         ("🔤", "Paleografi"),
         ("✅", "Özet"),
+        ("📊", "Sonuç"),
     ]
+    # 6. adım (Sonuç) sadece öğrenme tamamlandıktan sonra aktif
+    _SONUC_STEP = 6
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -198,15 +202,32 @@ class ManuscriptWizard(tk.Toplevel):
         # Adım 4 — Metin yapısı
         self._bolum_rows: list[dict] = []   # dinamik satırlar
 
+        # Adım 1 ek — İçerik & Transkripsiyon
+        self.icerik_vars: dict[str, tk.BooleanVar] = {
+            t: tk.BooleanVar(value=False) for t in ICERIK_TURLERI
+        }
+        self.mensur_manzum_var = tk.StringVar(value="Mensur")
+        self._trans_rows: list[dict] = []   # [{isaret, karsilik}]
+
+        # Adım 4 ek — Ana metin sayfaları
+        self.metin_bas_var = tk.IntVar(value=0)
+        self.metin_bit_var = tk.IntVar(value=0)
+
         # Adım 5 — Paleografi + alan
         self.alan_var       = tk.StringVar(value="Osmanlıca")
         self.donem_var      = tk.StringVar(value="Belirsiz")
         self.yazi_var       = tk.StringVar(value="Nesih")
         self.hareke_var     = tk.StringVar(value="Harekesiz")
-        self.dil_var        = tk.StringVar(value="ara")
+        # Dil kodu açıklamalı etiket olarak saklanır, _build_meta'da koda çevrilir
+        self.dil_var        = tk.StringVar(
+            value="Osmanlıca  —  Arap harfli Türkçe")
         self.guven_var      = tk.DoubleVar(value=0.9)
         self.ozel_not_var   = tk.StringVar()
         self._harf_rows: list[dict] = []
+
+        # Sonuç adımı
+        self._last_entry_id: str = ""
+        self._learning_done: bool = False
 
     # ── Kabuk ────────────────────────────────────────────────────────────
 
@@ -252,39 +273,66 @@ class ManuscriptWizard(tk.Toplevel):
 
     def _update_bar(self):
         for i, lbl in enumerate(self._step_btns):
-            if i < self._step:
+            if i == self._SONUC_STEP and not self._learning_done:
+                lbl.configure(fg=_FG3, bg=_PANEL)   # gri — henüz erişilemiyor
+            elif i < self._step:
                 lbl.configure(fg=_GREEN, bg=_PANEL)
             elif i == self._step:
                 lbl.configure(fg="white", bg=_ACC1)
             else:
                 lbl.configure(fg=_FG2, bg=_PANEL)
-        self._btn_back.configure(
-            state=tk.NORMAL if self._step > 0 else tk.DISABLED)
-        last = self._step == len(self.STEPS)-1
-        self._btn_next.configure(
-            text="✓  Öğrenmeyi Başlat" if last else "İleri  ▶",
-            bg=_GREEN if last else _ACC1)
+
+        # Geri butonu
+        back_ok = self._step > 0 and self._step != self._SONUC_STEP
+        self._btn_back.configure(state=tk.NORMAL if back_ok else tk.DISABLED)
+
+        # İleri / Başlat / Kapat
+        OZET = self._SONUC_STEP - 1   # = 5
+        if self._step == OZET:
+            self._btn_next.configure(text="✓  Öğrenmeyi Başlat",
+                                     bg=_GREEN, state=tk.NORMAL)
+        elif self._step == self._SONUC_STEP:
+            self._btn_next.configure(text="✓  Kapat",
+                                     bg=_GREEN, state=tk.NORMAL)
+        else:
+            self._btn_next.configure(text="İleri  ▶",
+                                     bg=_ACC1, state=tk.NORMAL)
 
     def _show_step(self, n):
         for w in self._area.winfo_children():
             w.destroy()
         self._step = n
         self._update_bar()
-        [self._s1, self._s2, self._s3, self._s4, self._s5, self._s6][n]()
+        [self._s1, self._s2, self._s3, self._s4,
+         self._s5, self._s6, self._s7][n]()
         # Canvas'ın gerçek boyutunu alıp iç frame'i genişletmesi için
         self._area.update_idletasks()
 
     def _go_next(self):
+        OZET = self._SONUC_STEP - 1   # = 5
+        if self._step == self._SONUC_STEP:
+            self._on_close()
+            return
+        if self._step == OZET:
+            if self._validate():
+                self._start()
+            return
         if not self._validate():
             return
-        if self._step < len(self.STEPS)-1:
-            self._show_step(self._step+1)
-        else:
-            self._start()
+        # Sonuç adımını atla (sadece _on_done ile girilir)
+        nxt = self._step + 1
+        if nxt == self._SONUC_STEP:
+            nxt = OZET   # Özet'ten önce atlamayı engelle — zaten OZET'teyiz
+            return
+        self._show_step(nxt)
 
     def _go_back(self):
+        if self._step == self._SONUC_STEP:
+            # Sonuç'tan Özet'e geri don — parametreleri değiştirip tekrar öğret
+            self._show_step(self._SONUC_STEP - 1)
+            return
         if self._step > 0:
-            self._show_step(self._step-1)
+            self._show_step(self._step - 1)
 
     def _validate(self) -> bool:
         if self._step == 0:
@@ -390,6 +438,68 @@ class ManuscriptWizard(tk.Toplevel):
         _id_row(3, 1, "Dem. No:",         self.demir_no_var,  16)
         _id_row(4, 0, "Tez / Kaynak:",    self.tez_ref_var,   32)
 
+        # ─ İçerik Türü ─
+        c3 = _card(scroll, padx=0, pady=0)
+        c3.pack(fill=tk.X, padx=16, pady=6)
+        _section(c3, "İçerik Türü", "📚").pack(fill=tk.X)
+
+        ic_body = tk.Frame(c3, bg=_CARD)
+        ic_body.pack(fill=tk.X, padx=14, pady=8)
+        for i, tur in enumerate(ICERIK_TURLERI):
+            var = self.icerik_vars[tur]
+            tk.Checkbutton(ic_body, text=tur, variable=var,
+                           bg=_CARD, fg=_FG, font=_FS,
+                           selectcolor="#1c2035",
+                           activebackground=_CARD).grid(
+                row=i // 3, column=i % 3,
+                sticky=tk.W, padx=6, pady=2)
+
+        mm_f = tk.Frame(c3, bg=_CARD)
+        mm_f.pack(anchor=tk.W, padx=14, pady=(0, 10))
+        _lbl(mm_f, "Üslup:", bg=_CARD, fg=_FG2, font=_FSB).pack(
+            side=tk.LEFT, padx=(0, 10))
+        for val in ("Mensur", "Manzum", "Karışık (mensur + manzum)"):
+            tk.Radiobutton(mm_f, text=val, variable=self.mensur_manzum_var,
+                           value=val, bg=_CARD, fg=_FG, font=_FS,
+                           selectcolor="#1c2035",
+                           activebackground=_CARD).pack(side=tk.LEFT, padx=6)
+
+        # ─ Transkripsiyon İşaretleri ─
+        c4 = _card(scroll, padx=0, pady=0)
+        c4.pack(fill=tk.X, padx=16, pady=6)
+        _section(c4, "Transkripsiyon İşaretleri ve Karşılıkları", "⇌").pack(fill=tk.X)
+
+        ti_info = tk.Label(c4,
+            text="Kaynakta kullanılan özel transkripsiyon işaretlerini buraya girin\n"
+                 "(örn.  ā = uzun a   |   ḥ = h ile h arası ses   |   ' = hemze)",
+            bg=_CARD, fg=_FG2, font=_FS, justify=tk.LEFT, padx=14, pady=4)
+        ti_info.pack(anchor=tk.W)
+
+        # Sütun başlıkları
+        ti_hdr = tk.Frame(c4, bg=_CARD)
+        ti_hdr.pack(fill=tk.X, padx=14, pady=(0, 2))
+        for txt, w in [("İşaret / Harf", 18), ("Karşılığı / Açıklama", 42), ("", 5)]:
+            tk.Label(ti_hdr, text=txt, bg=_CARD, fg=_FG3,
+                     font=_FSB, width=w, anchor=tk.W).pack(side=tk.LEFT, padx=2)
+
+        self._trans_frame = tk.Frame(c4, bg=_CARD)
+        self._trans_frame.pack(fill=tk.X, padx=14, pady=2)
+
+        for row in self._trans_rows:   # önceki adımlardan dönerken yeniden çiz
+            self._render_trans_row(row)
+
+        btn_ti = tk.Frame(c4, bg=_CARD)
+        btn_ti.pack(anchor=tk.W, padx=14, pady=(4, 10))
+        _btn(btn_ti, "➕  İşaret Ekle",
+             self._add_trans_row, "ghost").pack(side=tk.LEFT, padx=(0, 8))
+        # Yaygın işaretler hızlı ekle
+        for ish in ["ā", "ū", "ī", "ḥ", "ḫ", "ġ", "ṭ", "ẓ", "ʿ", "ʾ"]:
+            tk.Button(btn_ti, text=ish,
+                      command=lambda s=ish: self._add_trans_row(s),
+                      font=("Segoe UI", 10), bg="#1e2a45", fg=_FG,
+                      relief=tk.FLAT, bd=0, padx=6, pady=3,
+                      cursor="hand2").pack(side=tk.LEFT, padx=1)
+
         # ─ İpucu ─
         tip = tk.Frame(scroll, bg="#0d1e10")
         tip.pack(fill=tk.X, padx=16, pady=(4, 14))
@@ -400,6 +510,25 @@ class ManuscriptWizard(tk.Toplevel):
                       "Program bu çiftlerden öğrenerek benzer yazmaları daha isabetli okur.",
                  bg="#0d1e10", fg="#6dbf7e", font=_FS,
                  wraplength=660, justify=tk.LEFT, pady=8, padx=12).pack()
+
+    def _add_trans_row(self, isaret=""):
+        row = {"isaret": tk.StringVar(value=isaret), "karsilik": tk.StringVar()}
+        self._trans_rows.append(row)
+        self._render_trans_row(row)
+
+    def _render_trans_row(self, row):
+        f = tk.Frame(self._trans_frame, bg=_CARD)
+        f.pack(fill=tk.X, pady=1)
+        row["_frame"] = f
+        _entry(f, row["isaret"],   width=14).pack(side=tk.LEFT, padx=2)
+        _entry(f, row["karsilik"], width=44).pack(side=tk.LEFT, padx=2)
+        _btn(f, "✖", lambda fr=f, r=row: self._del_trans_row(fr, r),
+             "danger").pack(side=tk.LEFT, padx=4)
+
+    def _del_trans_row(self, frame, row):
+        frame.destroy()
+        if row in self._trans_rows:
+            self._trans_rows.remove(row)
 
     def _browse(self, var: tk.StringVar, filetypes: list):
         p = filedialog.askopenfilename(
@@ -593,8 +722,23 @@ class ManuscriptWizard(tk.Toplevel):
     def _s4(self):
         _, scroll = _scrolled_frame(self._area)
 
+        # ─ Ana Metin sayfaları (her zaman görünür) ─
+        cm = _card(scroll, padx=0, pady=0)
+        cm.pack(fill=tk.X, padx=16, pady=(14, 6))
+        _section(cm, "Ana Metin Kısmı", "📖").pack(fill=tk.X)
+        mf = tk.Frame(cm, bg=_CARD)
+        mf.pack(anchor=tk.W, padx=14, pady=10)
+        _lbl(mf, "Metin başlangıç sayfası:", bg=_CARD, fg=_FG2, font=_FSB).pack(
+            side=tk.LEFT, padx=(0, 6))
+        _spin(mf, self.metin_bas_var, lo=0, width=6).pack(side=tk.LEFT)
+        _lbl(mf, "   Bitiş:", bg=_CARD, fg=_FG2, font=_FSB).pack(
+            side=tk.LEFT, padx=(12, 6))
+        _spin(mf, self.metin_bit_var, lo=0, width=6).pack(side=tk.LEFT)
+        _lbl(mf, "   (0 = otomatik algıla)", bg=_CARD, fg=_FG3, font=_FS).pack(
+            side=tk.LEFT, padx=8)
+
         info = tk.Frame(scroll, bg="#1a1e10")
-        info.pack(fill=tk.X, padx=16, pady=(14,8))
+        info.pack(fill=tk.X, padx=16, pady=(4, 8))
         tk.Label(info,
                  text="📑  Transkripsiyon kaynağında hangi bölümler var ve kaçıncı sayfalarda?\n"
                       "Bu bilgi, yalnızca metin kısmını öğrenmek için doğru sayfaları seçmeye yarar.",
@@ -678,12 +822,12 @@ class ManuscriptWizard(tk.Toplevel):
                 row=r, column=c*2, sticky=tk.W, pady=5, padx=(0,8))
             widget_fn().grid(row=r, column=c*2+1, sticky=tk.W, pady=5, padx=(0,20))
 
-        _frow(g, "Alan:",       lambda: _combo(g, self.alan_var,   ALANLAR,    22), 0, 0)
-        _frow(g, "Dönem:",      lambda: _combo(g, self.donem_var,  DONEMLER,   22), 1, 0)
-        _frow(g, "Yazı Türü:",  lambda: _combo(g, self.yazi_var,   YAZI_TURLERI, 22), 2, 0)
-        _frow(g, "Hareke:",     lambda: _combo(g, self.hareke_var, HAREKE_DURUMLARI, 22), 3, 0)
-        _frow(g, "Dil Kodu:",   lambda: _combo(g, self.dil_var,
-                                               ["ara","tur","tur+ara","fas","deu","eng"], 10), 4, 0)
+        _frow(g, "Alan:",         lambda: _combo(g, self.alan_var,   ALANLAR,    24), 0, 0)
+        _frow(g, "Dönem:",        lambda: _combo(g, self.donem_var,  DONEMLER,   24), 1, 0)
+        _frow(g, "Yazı Türü:",    lambda: _combo(g, self.yazi_var,   YAZI_TURLERI, 24), 2, 0)
+        _frow(g, "Hareke:",       lambda: _combo(g, self.hareke_var, HAREKE_DURUMLARI, 24), 3, 0)
+        _frow(g, "Yazı Sistemi\n(Dil):",
+              lambda: _combo(g, self.dil_var, DIL_GORUNUM_LISTE, 42), 4, 0)
 
         # Güven
         gf = tk.Frame(c1, bg=_CARD)
@@ -714,7 +858,8 @@ class ManuscriptWizard(tk.Toplevel):
         # Sütun başlıkları
         hch = tk.Frame(c2, bg=_CARD)
         hch.pack(fill=tk.X, padx=12, pady=(0,2))
-        for txt, w in [("Harf",8),("Konum",12),("Örnek Kelime",16),("Açıklama",28),("",5)]:
+        for txt, w in [("Harf",6),("Konum",10),("Örnek Kelime",14),
+                       ("Açıklama",22),("Görüntüler",9),("",4)]:
             tk.Label(hch, text=txt, bg=_CARD, fg=_FG3, font=_FSB,
                      width=w, anchor=tk.W).pack(side=tk.LEFT, padx=2)
 
@@ -753,13 +898,21 @@ class ManuscriptWizard(tk.Toplevel):
         self._render_harf_row(row)
 
     def _render_harf_row(self, row):
+        if "goruntular" not in row:
+            row["goruntular"] = []
         f = tk.Frame(self._harf_frame, bg=_CARD)
         f.pack(fill=tk.X, pady=2)
         row["_frame"] = f
-        _entry(f, row["harf"],   width=6).pack(side=tk.LEFT, padx=2)
-        _combo(f, row["konum"],  ["baş","orta","son","bağımsız"], width=10).pack(side=tk.LEFT, padx=2)
-        _entry(f, row["kelime"], width=14).pack(side=tk.LEFT, padx=2)
-        _entry(f, row["acikl"],  width=26).pack(side=tk.LEFT, padx=2)
+        _entry(f, row["harf"],   width=5).pack(side=tk.LEFT, padx=2)
+        _combo(f, row["konum"],  ["baş","orta","son","bağımsız"], width=9).pack(side=tk.LEFT, padx=2)
+        _entry(f, row["kelime"], width=13).pack(side=tk.LEFT, padx=2)
+        _entry(f, row["acikl"],  width=22).pack(side=tk.LEFT, padx=2)
+        # Görüntü sayısı etiketi + buton
+        row["_img_lbl"] = tk.Label(f, text=f"🖼 {len(row['goruntular'])}",
+                                    bg=_CARD, fg=_FG2, font=_FS, cursor="hand2")
+        row["_img_lbl"].pack(side=tk.LEFT, padx=2)
+        row["_img_lbl"].bind("<Button-1>",
+                              lambda e, r=row: self._show_harf_images(r))
         _btn(f, "✖", lambda fr=f, r=row: self._del_harf(fr, r), "danger").pack(
             side=tk.LEFT, padx=4)
 
@@ -767,6 +920,88 @@ class ManuscriptWizard(tk.Toplevel):
         frame.destroy()
         if row in self._harf_rows:
             self._harf_rows.remove(row)
+
+    def _show_harf_images(self, row: dict):
+        """Harf görüntüleri mini-diyalogu: ekle / sil / önizle."""
+        dlg = tk.Toplevel(self)
+        dlg.title(f"Harf Görüntüleri — {row['harf'].get() or '?'}")
+        dlg.configure(bg=_BG)
+        dlg.geometry("520x420")
+        dlg.minsize(420, 300)
+        dlg.transient(self)
+        dlg.grab_set()
+
+        _lbl(dlg,
+             "Harfin başta / ortada / sonda biçimlerini gösteren\n"
+             "ekran görüntüleri veya kesintiler ekleyin.",
+             fg=_FG2, font=_FS).pack(anchor=tk.W, padx=14, pady=(10,4))
+
+        list_f = tk.Frame(dlg, bg=_BG)
+        list_f.pack(fill=tk.BOTH, expand=True, padx=14, pady=4)
+
+        # PIL thumbnail desteği
+        _pil_ok = False
+        try:
+            from PIL import Image, ImageTk
+            _pil_ok = True
+        except ImportError:
+            pass
+
+        _photo_refs: list = []   # garbage collector'dan korur
+
+        def refresh():
+            for w in list_f.winfo_children():
+                w.destroy()
+            _photo_refs.clear()
+            if not row["goruntular"]:
+                _lbl(list_f, "Henüz görüntü eklenmedi.",
+                     fg=_FG3, font=_FS).pack(anchor=tk.W, pady=8)
+                return
+            for idx, path in enumerate(row["goruntular"]):
+                rf = tk.Frame(list_f, bg=_CARD)
+                rf.pack(fill=tk.X, pady=2)
+                # Küçük önizleme
+                if _pil_ok:
+                    try:
+                        img = Image.open(path)
+                        img.thumbnail((64, 64))
+                        photo = ImageTk.PhotoImage(img)
+                        _photo_refs.append(photo)
+                        tk.Label(rf, image=photo, bg=_CARD).pack(
+                            side=tk.LEFT, padx=4, pady=2)
+                    except Exception:
+                        _lbl(rf, "🖼", fg=_FG2, bg=_CARD, font=("Segoe UI",18)).pack(
+                            side=tk.LEFT, padx=4)
+                else:
+                    _lbl(rf, "🖼", fg=_FG2, bg=_CARD, font=("Segoe UI",18)).pack(
+                        side=tk.LEFT, padx=4)
+                nm = Path(path).name
+                _lbl(rf, nm if len(nm)<48 else nm[:45]+"…",
+                     fg=_FG, bg=_CARD, font=_FS).pack(
+                    side=tk.LEFT, padx=4, expand=True, anchor=tk.W)
+                _btn(rf, "✖",
+                     lambda p=path: (row["goruntular"].remove(p), refresh()),
+                     "danger").pack(side=tk.RIGHT, padx=4)
+
+        def add_img():
+            ft = [("Görüntü","*.jpg *.jpeg *.png *.bmp *.tiff *.tif *.webp"),
+                  ("Tüm Dosyalar","*.*")]
+            p = filedialog.askopenfilename(
+                filetypes=ft, title="Harf Görüntüsü Seç", parent=dlg)
+            if p:
+                row["goruntular"].append(p)
+                # Etiket güncelle
+                if "_img_lbl" in row:
+                    row["_img_lbl"].configure(
+                        text=f"🖼 {len(row['goruntular'])}")
+                refresh()
+
+        refresh()
+
+        btn_f = tk.Frame(dlg, bg=_BG)
+        btn_f.pack(fill=tk.X, padx=14, pady=(4,12))
+        _btn(btn_f, "➕  Görüntü Ekle", add_img, "primary").pack(side=tk.LEFT)
+        _btn(btn_f, "✓  Tamam", dlg.destroy, "success").pack(side=tk.RIGHT)
 
     # ════════════════════════════════════════════════════════════════
     #  ADIM 6 — Özet & Başlat
@@ -918,6 +1153,10 @@ class ManuscriptWizard(tk.Toplevel):
             for r in self._harf_rows if r["harf"].get()
         ]
 
+        # Dil kodu: görüntü etiketini koda çevir
+        dil_gorunum = self.dil_var.get()
+        dil_kodu = DIL_GORUNUM.get(dil_gorunum, "ara")
+
         return ManuscriptMeta(
             eser_adi        = self.eser_adi_var.get().strip(),
             yazar           = self.yazar_var.get().strip(),
@@ -930,16 +1169,34 @@ class ManuscriptWizard(tk.Toplevel):
             donem           = self.donem_var.get(),
             yazi_turu       = self.yazi_var.get(),
             hareke          = self.hareke_var.get(),
-            dil_kodu        = self.dil_var.get(),
+            dil_kodu        = dil_kodu,
             sutun_sayisi    = self.sutun_var.get(),
             toplam_varak    = self.toplam_varak_var.get(),
             varak_satir     = varak,
+            icerik_turleri  = [k for k, v in self.icerik_vars.items() if v.get()],
+            mensur_manzum   = self.mensur_manzum_var.get(),
+            trans_isaretleri = [
+                {"isaret": r["isaret"].get(), "karsilik": r["karsilik"].get()}
+                for r in self._trans_rows
+                if r["isaret"].get()
+            ],
+            metin_baslangic = self.metin_bas_var.get(),
+            metin_bitis     = self.metin_bit_var.get(),
             imla_secimler   = [k for k, v in self.imla_vars.items() if v.get()],
             imla_serbest    = imla_st,
             aktarim_ilkeleri = aktarim,
             metin_bolumleri = bolumleri,
             kaynak_turu     = self.kaynak_turu_var.get(),
-            harf_formlari   = harf_f,
+            harf_formlari   = [
+                HarfFormu(
+                    harf          = r["harf"].get(),
+                    konum         = r["konum"].get(),
+                    ornek_kelime  = r["kelime"].get(),
+                    aciklama      = r["acikl"].get(),
+                    goruntu_yollar = r.get("goruntular", []),
+                )
+                for r in self._harf_rows if r["harf"].get()
+            ],
             ozel_notlar     = notlar,
             guven           = self.guven_var.get(),
         )
@@ -1009,8 +1266,8 @@ class ManuscriptWizard(tk.Toplevel):
 
         def _run():
             try:
-                lib          = get_library()
-                count, done_flag = lib.teach(
+                lib                    = get_library()
+                count, done_flag, eid  = lib.teach(
                     ms_pdf       = Path(self.ms_path_var.get()),
                     trans_source = Path(self.trans_path_var.get()),
                     ms_pages     = (ms_start, ms_end),
@@ -1020,7 +1277,7 @@ class ManuscriptWizard(tk.Toplevel):
                     stop_event   = self._stop_event,
                     pause_event  = self._pause_event,
                 )
-                self.after(0, lambda: self._on_done(count, done_flag))
+                self.after(0, lambda: self._on_done(count, done_flag, eid))
             except Exception as exc:
                 self.after(0, lambda: self._on_err(str(exc)))
 
@@ -1042,12 +1299,16 @@ class ManuscriptWizard(tk.Toplevel):
                     if done > 0 and done < total else ""))
         self.update_idletasks()
 
-    def _on_done(self, count: int, completed: bool):
+    def _on_done(self, count: int, completed: bool, entry_id: str = ""):
         elapsed = time.time() - self._start_time
 
         # Kontrol butonlarını kapat
         self._pause_btn.configure(state=tk.DISABLED)
         self._stop_btn.configure(state=tk.DISABLED)
+
+        # Sonuç adımı için sakla
+        self._last_entry_id = entry_id
+        self._learning_done = True
 
         if completed:
             self._prog_bar["value"] = 100
@@ -1099,13 +1360,18 @@ class ManuscriptWizard(tk.Toplevel):
                 parent=self,
             )
 
-        self._btn_next.configure(text="✓  Kapat", state=tk.NORMAL,
-                                  command=self.destroy)
         try:
             from metin_atolyesi.core.github_sync import get_sync
             get_sync().schedule_push(delay=3.0)
         except Exception:
             pass
+
+        # Sonuç sekmesine git
+        self._btn_next.configure(
+            text="📊  Sonuçları Görüntüle  ▶", state=tk.NORMAL,
+            bg=_ACC1,
+            command=lambda: self._show_step(self._SONUC_STEP))
+        self._btn_back.configure(state=tk.NORMAL)
 
     def _on_err(self, msg: str):
         self._pause_btn.configure(state=tk.DISABLED)
@@ -1116,6 +1382,129 @@ class ManuscriptWizard(tk.Toplevel):
         self._btn_next.configure(text="Yeniden Dene",
                                   state=tk.NORMAL, command=self._start)
         self._btn_back.configure(state=tk.NORMAL)
+
+
+    # ════════════════════════════════════════════════════════════════
+    #  ADIM 7 — Sonuç: Öğrenilen İçerik
+    # ════════════════════════════════════════════════════════════════
+
+    def _s7(self):
+        _, scroll = _scrolled_frame(self._area)
+
+        # Başlık
+        top_f = tk.Frame(scroll, bg="#0d1e10")
+        top_f.pack(fill=tk.X, padx=16, pady=(14, 6))
+        tk.Label(top_f,
+                 text="📊  Öğrenilen içeriği aşağıda görebilirsiniz.\n"
+                      "Eksik veya atlanan sayfaları tespit edip tekrar öğretebilirsiniz.",
+                 bg="#0d1e10", fg="#b8cc70", font=_FS,
+                 justify=tk.LEFT, padx=12, pady=8).pack(fill=tk.X)
+
+        # Kütüphaneden giriş yükle
+        lib     = get_library()
+        entries = lib.list_entries()
+        entry   = None
+        for e in reversed(entries):
+            if e.get("id") == self._last_entry_id:
+                entry = e
+                break
+        if entry is None and entries:
+            entry = entries[-1]   # son kaydı göster
+
+        if not entry:
+            _lbl(scroll, "Henüz öğrenilmiş kayıt bulunamadı.",
+                 fg=_FG3, font=_F).pack(padx=16, pady=20)
+            return
+
+        pages   = entry.get("pages", [])
+        partial = entry.get("partial", False)
+        meta_d  = entry.get("meta", {})
+
+        # ─ Özet kartı ─
+        cs = _card(scroll, padx=0, pady=0)
+        cs.pack(fill=tk.X, padx=16, pady=4)
+        _section(cs, "Öğrenme Özeti", "✅" if not partial else "⏹").pack(fill=tk.X)
+
+        sb = tk.Frame(cs, bg=_CARD)
+        sb.pack(fill=tk.X, padx=14, pady=8)
+        sb.columnconfigure(1, weight=1); sb.columnconfigure(3, weight=1)
+
+        def _sr(r, c, lbl, val, vclr=_FG):
+            tk.Label(sb, text=f"{lbl}:", bg=_CARD, fg=_FG2,
+                     font=_FSB, width=18, anchor=tk.W).grid(
+                row=r, column=c*2, sticky=tk.W, pady=3, padx=(0,4))
+            tk.Label(sb, text=str(val), bg=_CARD, fg=vclr,
+                     font=_F, anchor=tk.W).grid(
+                row=r, column=c*2+1, sticky=tk.W, pady=3, padx=(0,20))
+
+        _sr(0, 0, "Eser",          entry.get("eser_adi","—"))
+        _sr(0, 1, "Durum",
+            "Tamamlandı" if not partial else "Kısmi (durduruldu)",
+            _GREEN if not partial else _AMBER)
+        _sr(1, 0, "Öğrenilen Sayfa", f"{len(pages)} sayfa")
+        _sr(1, 1, "Alan",           meta_d.get("alan","—"))
+        _sr(2, 0, "Yazı Türü",      meta_d.get("yazi_turu","—"))
+        _sr(2, 1, "Hareke",         meta_d.get("hareke","—"))
+
+        # ─ Sayfa listesi ─
+        cp = _card(scroll, padx=0, pady=0)
+        cp.pack(fill=tk.X, padx=16, pady=4)
+        _section(cp, f"Öğrenilen Sayfalar  ({len(pages)} adet)", "📋").pack(fill=tk.X)
+
+        # Scrollable liste
+        lf = tk.Frame(cp, bg=_CARD)
+        lf.pack(fill=tk.X, padx=14, pady=8)
+
+        for i, pg in enumerate(pages):
+            from metin_atolyesi.core.manuscript_library import _load_sample_text
+            text_preview = _load_sample_text(pg["hash"])[:80].replace("\n", " ")
+            rf = tk.Frame(lf, bg="#1c2035" if i % 2 == 0 else _CARD)
+            rf.pack(fill=tk.X, pady=1)
+            tk.Label(rf, text=f"  S.{pg['ms_page']+1:>4}",
+                     bg=rf["bg"], fg=_GREEN, font=_FSB, width=8).pack(side=tk.LEFT)
+            tk.Label(rf, text=text_preview or "(metin yok)",
+                     bg=rf["bg"], fg=_FG if text_preview else _FG3,
+                     font=_FS, anchor=tk.W).pack(side=tk.LEFT, padx=4)
+
+        if not pages:
+            _lbl(lf, "Hiç sayfa öğrenilmedi.", fg=_AMBER, font=_F).pack(pady=8)
+
+        # ─ Eksik / Atlanan sayfalar ─
+        ms_start = entry.get("ms_start", 0)
+        ms_end   = entry.get("ms_end", 0)
+        learned  = {pg["ms_page"] for pg in pages}
+        missing  = [p for p in range(ms_start, ms_end) if p not in learned]
+
+        if missing:
+            cm2 = _card(scroll, padx=0, pady=0)
+            cm2.pack(fill=tk.X, padx=16, pady=4)
+            _section(cm2,
+                     f"Atlanmış / Boş Sayfalar  ({len(missing)} adet)", "⚠").pack(fill=tk.X)
+            mf2 = tk.Frame(cm2, bg=_CARD)
+            mf2.pack(fill=tk.X, padx=14, pady=6)
+            miss_txt = ", ".join(f"S.{p+1}" for p in missing[:30])
+            if len(missing) > 30:
+                miss_txt += f" … (+{len(missing)-30} daha)"
+            tk.Label(mf2,
+                     text=f"Bu sayfalar boş transkripsiyon nedeniyle atlandı:\n{miss_txt}",
+                     bg=_CARD, fg=_AMBER, font=_FS,
+                     justify=tk.LEFT, wraplength=660, padx=4, pady=4).pack(anchor=tk.W)
+
+        # ─ Eylem butonları ─
+        act = tk.Frame(scroll, bg=_BG)
+        act.pack(fill=tk.X, padx=16, pady=(8, 14))
+
+        _btn(act, "🔄  Tekrar Öğret  (farklı sayfa / parametre)",
+             lambda: self._show_step(self._SONUC_STEP - 1),
+             "ghost").pack(side=tk.LEFT, padx=(0, 8))
+
+        _btn(act, "✓  Kapat",
+             self._on_close, "success").pack(side=tk.RIGHT)
+
+        # _update_bar için adım adını da güncelle
+        self._btn_back.configure(
+            state=tk.NORMAL,
+            text="◀  Özet'e Dön")
 
 
 # ══════════════════════════════════════════════════════════════════════════
