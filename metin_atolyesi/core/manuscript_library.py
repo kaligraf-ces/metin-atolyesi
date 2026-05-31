@@ -363,17 +363,40 @@ class ManuscriptLibrary:
 
     @staticmethod
     def _extract_transcription(source: Path, start: int, end: int) -> list[str]:
-        if source.suffix.lower() == ".txt":
-            lines = source.read_text(encoding="utf-8", errors="replace").splitlines()
-            needed = end - start
-            chunk  = max(1, len(lines) // max(needed, 1))
+        """PDF / DOCX / TXT / RTF → sayfa başına metin listesi döndürür."""
+        needed = max(end - start, 1)
+        ext = source.suffix.lower()
+
+        # ── Düz metin ──────────────────────────────────────────────
+        if ext in (".txt", ".rtf"):
+            raw   = source.read_text(encoding="utf-8", errors="replace")
+            lines = raw.splitlines()
+            chunk = max(1, len(lines) // needed)
             return ["\n".join(lines[i*chunk:(i+1)*chunk]) for i in range(needed)]
+
+        # ── Word belgesi (.docx) ────────────────────────────────────
+        if ext in (".docx", ".doc", ".odt"):
+            try:
+                import docx
+                doc   = docx.Document(str(source))
+                paras = [p.text for p in doc.paragraphs if p.text.strip()]
+                chunk = max(1, len(paras) // needed)
+                return ["\n".join(paras[i*chunk:(i+1)*chunk]) for i in range(needed)]
+            except ImportError:
+                pass  # python-docx kurulu değilse PDF yolunu dene
+            except Exception:
+                return [""] * needed
+
+        # ── PDF (varsayılan) ────────────────────────────────────────
         try:
             import fitz
             doc = fitz.open(str(source))
-            return [doc[pg].get_text("text") for pg in range(start, min(end, len(doc)))]
+            return [
+                doc[pg].get_text("text")
+                for pg in range(start, min(end, len(doc)))
+            ]
         except Exception:
-            return [""] * (end - start)
+            return [""] * needed
 
     def get_similar_examples(self, alan: str, donem: str = "",
                               yazi_turu: str = "", max_pages: int = 3) -> list[dict]:

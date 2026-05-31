@@ -275,77 +275,112 @@ class ManuscriptWizard(tk.Toplevel):
     #  ADIM 1 — Kaynak Seçimi
     # ════════════════════════════════════════════════════════════════
 
+    # Desteklenen dosya türleri
+    _FT_YAZI = [
+        ("PDF / Görüntü",   "*.pdf *.tiff *.tif *.jpg *.jpeg *.png *.bmp *.webp"),
+        ("PDF",             "*.pdf"),
+        ("Görüntü",         "*.tiff *.tif *.jpg *.jpeg *.png *.bmp *.webp"),
+        ("Tüm Dosyalar",    "*.*"),
+    ]
+    _FT_TRANS = [
+        ("PDF / Word / Metin", "*.pdf *.docx *.doc *.txt *.rtf *.odt"),
+        ("PDF",                "*.pdf"),
+        ("Word Belgesi",       "*.docx *.doc"),
+        ("Düz Metin",          "*.txt *.rtf"),
+        ("Tüm Dosyalar",       "*.*"),
+    ]
+
     def _s1(self):
         _, scroll = _scrolled_frame(self._area)
 
-        def _file_row(parent, label, var, filetypes, r):
-            _lbl(parent, label, font=_FSB, fg=_FG2, bg=_CARD).grid(
-                row=r, column=0, sticky=tk.W, pady=(8,2), padx=12)
+        def _file_row(parent, label, var, filetypes, hint=""):
+            """Tam genişlik dosya satırı (pack tabanlı)."""
+            _lbl(parent, label, font=_FSB, fg=_FG2, bg=_CARD).pack(
+                anchor=tk.W, pady=(10, 2), padx=14)
             fr = tk.Frame(parent, bg=_CARD)
-            fr.grid(row=r+1, column=0, sticky=tk.EW, padx=12, pady=(0,6))
-            _entry(fr, var, width=48).pack(side=tk.LEFT, padx=(0,6))
-            _btn(fr, "📂", lambda ft=filetypes, v=var: self._browse(v, ft),
+            fr.pack(fill=tk.X, padx=14, pady=(0, 4))
+            ent = _entry(fr, var, width=52)
+            ent.pack(side=tk.LEFT, padx=(0, 6))
+            _btn(fr, "📂 Seç",
+                 lambda ft=filetypes, v=var: self._browse(v, ft),
                  "ghost").pack(side=tk.LEFT)
+            if hint:
+                _lbl(fr, hint, fg=_FG3, bg=_CARD, font=_FS).pack(
+                    side=tk.LEFT, padx=(8, 0))
 
-        # PDF seçimi
+        # ─ Kaynak Dosyalar ─
         c1 = _card(scroll, padx=0, pady=0)
-        c1.pack(fill=tk.X, padx=16, pady=(14,6))
+        c1.pack(fill=tk.X, padx=16, pady=(14, 6))
         _section(c1, "Kaynak Dosyalar", "📄").pack(fill=tk.X)
-        c1.columnconfigure(0, weight=1)
-        _file_row(c1, "El Yazması PDF:", self.ms_path_var,
-                  [("PDF","*.pdf"),("Tüm","*.*")], 1)
-        _file_row(c1, "Transkripsiyon Kaynağı (PDF / TXT):",
-                  self.trans_path_var,
-                  [("PDF/Metin","*.pdf *.txt"),("Tüm","*.*")], 3)
+
+        _file_row(c1, "El Yazması (PDF / TIFF / JPG / PNG …):",
+                  self.ms_path_var, self._FT_YAZI,
+                  "pdf · tiff · jpg · png · bmp · webp")
+        _file_row(c1, "Transkripsiyon Kaynağı (PDF / Word / Metin …):",
+                  self.trans_path_var, self._FT_TRANS,
+                  "pdf · docx · txt · rtf · odt")
 
         # Kaynak türü
         kt_fr = tk.Frame(c1, bg=_CARD)
-        kt_fr.grid(row=5, column=0, sticky=tk.W, padx=12, pady=(0,10))
-        _lbl(kt_fr, "Kaynak türü:", bg=_CARD, fg=_FG2, font=_FSB).pack(side=tk.LEFT, padx=(0,8))
-        for val, lbl in [("transkripsiyon","Transkripsiyon"),
-                          ("tez","Tez"),("baskı","Matbu Baskı"),("dijital","Dijital Edisyon")]:
-            tk.Radiobutton(kt_fr, text=lbl, variable=self.kaynak_turu_var, value=val,
-                           bg=_CARD, fg=_FG, font=_FS,
+        kt_fr.pack(anchor=tk.W, padx=14, pady=(4, 12))
+        _lbl(kt_fr, "Kaynak türü:", bg=_CARD, fg=_FG2, font=_FSB).pack(
+            side=tk.LEFT, padx=(0, 10))
+        for val, lbl_text in [
+            ("transkripsiyon", "Transkripsiyon"),
+            ("tez",            "Tez"),
+            ("baskı",          "Matbu Baskı"),
+            ("dijital",        "Dijital Edisyon"),
+        ]:
+            tk.Radiobutton(kt_fr, text=lbl_text, variable=self.kaynak_turu_var,
+                           value=val, bg=_CARD, fg=_FG, font=_FS,
                            selectcolor="#1c2035",
                            activebackground=_CARD).pack(side=tk.LEFT, padx=6)
 
-        # Kimlik bilgileri
+        # ─ Eser Kimliği (grid body ayrı frame içinde) ─
         c2 = _card(scroll, padx=0, pady=0)
         c2.pack(fill=tk.X, padx=16, pady=6)
         _section(c2, "Eser Kimliği", "📋").pack(fill=tk.X)
 
-        def _id_row(parent, label, var, r, c, width=26):
-            _lbl(parent, label, bg=_CARD, fg=_FG2, font=_FSB).grid(
-                row=r, column=c*2, sticky=tk.W, padx=(12,4), pady=4)
-            _entry(parent, var, width=width, bg="#1c2035").grid(
-                row=r, column=c*2+1, sticky=tk.EW, padx=(0,12), pady=4)
+        body2 = tk.Frame(c2, bg=_CARD)
+        body2.pack(fill=tk.X, padx=14, pady=10)
+        body2.columnconfigure(1, weight=1)
+        body2.columnconfigure(3, weight=1)
 
-        c2.columnconfigure(1, weight=1)
-        c2.columnconfigure(3, weight=1)
-        _id_row(c2, "Eser Adı:",     self.eser_adi_var,  1, 0, 30)
-        _id_row(c2, "Yazar:",        self.yazar_var,      2, 0, 30)
-        _id_row(c2, "Müstensih:",    self.muellif_var,    3, 0)
-        _id_row(c2, "İstinsah Tar.:", self.tarih_var,    3, 1, 16)
-        _id_row(c2, "Kütüphane:",    self.kutuphane_var,  4, 0)
-        _id_row(c2, "Dem. No:",      self.demir_no_var,   4, 1, 16)
-        _id_row(c2, "Tez / Kaynak:", self.tez_ref_var,    5, 0, 30)
+        def _id_row(r, c, label, var, width=26):
+            _lbl(body2, label, bg=_CARD, fg=_FG2, font=_FSB).grid(
+                row=r, column=c * 2, sticky=tk.W, padx=(0, 4), pady=5)
+            _entry(body2, var, width=width).grid(
+                row=r, column=c * 2 + 1, sticky=tk.EW, padx=(0, 18), pady=5)
 
-        # İpucu
+        _id_row(0, 0, "Eser Adı:",       self.eser_adi_var,  32)
+        _id_row(1, 0, "Yazar:",           self.yazar_var,     32)
+        _id_row(2, 0, "Müstensih:",       self.muellif_var)
+        _id_row(2, 1, "İstinsah Tar.:",   self.tarih_var,     16)
+        _id_row(3, 0, "Kütüphane:",       self.kutuphane_var)
+        _id_row(3, 1, "Dem. No:",         self.demir_no_var,  16)
+        _id_row(4, 0, "Tez / Kaynak:",    self.tez_ref_var,   32)
+
+        # ─ İpucu ─
         tip = tk.Frame(scroll, bg="#0d1e10")
-        tip.pack(fill=tk.X, padx=16, pady=(4,14))
+        tip.pack(fill=tk.X, padx=16, pady=(4, 14))
         tk.Label(tip,
-                 text="💡  Transkripsiyon kaynağı: eserin matbu/dijital baskısı, "
-                      "tez transkripsiyonu veya el yazısıyla hazırlanmış okunuşu olabilir.\n"
+                 text="💡  El yazması: PDF, TIFF veya görüntü dosyası (JPG/PNG/BMP/WebP).\n"
+                      "Transkripsiyon: eserin matbu/dijital baskısı, tez transkripsiyonu, "
+                      "Word belgesi veya düz metin.\n"
                       "Program bu çiftlerden öğrenerek benzer yazmaları daha isabetli okur.",
                  bg="#0d1e10", fg="#6dbf7e", font=_FS,
                  wraplength=660, justify=tk.LEFT, pady=8, padx=12).pack()
 
     def _browse(self, var: tk.StringVar, filetypes: list):
-        p = filedialog.askopenfilename(filetypes=filetypes)
+        p = filedialog.askopenfilename(
+            filetypes=filetypes,
+            title="Dosya Seç",
+        )
         if p:
             var.set(p)
             if var is self.ms_path_var and not self.eser_adi_var.get():
-                self.eser_adi_var.set(Path(p).stem.replace("_"," "))
+                stem = Path(p).stem.replace("_", " ").replace("-", " ")
+                self.eser_adi_var.set(stem)
 
     # ════════════════════════════════════════════════════════════════
     #  ADIM 2 — Varak & Satır Bilgisi
