@@ -95,18 +95,27 @@ def _card(p, **kw):
 
 def _scrolled_frame(parent) -> tuple[tk.Canvas, tk.Frame]:
     """Kaydırılabilir iç çerçeve döndürür."""
-    canvas = tk.Canvas(parent, bg=_BG, highlightthickness=0)
-    sb     = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=canvas.yview)
+    sb     = ttk.Scrollbar(parent, orient=tk.VERTICAL)
+    canvas = tk.Canvas(parent, bg=_BG, highlightthickness=0,
+                       yscrollcommand=sb.set)
+    sb.configure(command=canvas.yview)
     frame  = tk.Frame(canvas, bg=_BG)
     win    = canvas.create_window((0, 0), window=frame, anchor=tk.NW)
-    canvas.configure(yscrollcommand=sb.set)
 
-    def _resize(e):
-        canvas.configure(scrollregion=canvas.bbox("all"))
-        canvas.itemconfig(win, width=canvas.winfo_width())
-    frame.bind("<Configure>", _resize)
-    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    # Frame büyüdükçe → scrollregion güncelle
+    frame.bind("<Configure>",
+               lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+    # Canvas boyutu değişince → iç frame genişliği canvas ile eşleşsin
+    canvas.bind("<Configure>",
+                lambda e: canvas.itemconfig(win, width=e.width))
+
+    # Fare tekerleği
+    def _on_mousewheel(e):
+        canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+    canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
     sb.pack(side=tk.RIGHT, fill=tk.Y)
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
     return canvas, frame
 
 
@@ -127,8 +136,8 @@ class ManuscriptWizard(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("El Yazması Öğretme Sihirbazı")
-        self.geometry("800x660")
-        self.minsize(740, 580)
+        self.geometry("820x680")
+        self.minsize(760, 580)
         self.configure(bg=_BG)
         self.transient(parent)
         self.grab_set()
@@ -136,6 +145,15 @@ class ManuscriptWizard(tk.Toplevel):
         self._init_vars()
         self._build_shell()
         self._show_step(0)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _on_close(self):
+        # Fare tekerleği binding'ini temizle
+        try:
+            self.unbind_all("<MouseWheel>")
+        except Exception:
+            pass
+        self.destroy()
 
     # ── Değişkenler ──────────────────────────────────────────────────────
 
@@ -253,6 +271,8 @@ class ManuscriptWizard(tk.Toplevel):
         self._step = n
         self._update_bar()
         [self._s1, self._s2, self._s3, self._s4, self._s5, self._s6][n]()
+        # Canvas'ın gerçek boyutunu alıp iç frame'i genişletmesi için
+        self._area.update_idletasks()
 
     def _go_next(self):
         if not self._validate():
