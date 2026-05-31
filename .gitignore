@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Sanal ortam
+.venv/
+venv/
+env/
+.env
+
+# Proje verileri (büyük dosyalar - GitHub'a gitmez)
+projects/
+exports/
+work/
+temp/
+*.tmp
+*.log
+
+# PDF ve görüntü dosyaları (kullanıcı verisi)
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.tiff
+*.tif
+
+# Tesseract dil dosyaları (büyük)
+tessdata/*.traineddata
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# Build
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# API anahtarları (asla commit edilmez)
+config_local.json
+secrets.json
+
+# Windows
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store

@@ -1,0 +1,13 @@
+pillow
+openpyxl
+python-docx
+pandas
+pytesseract
+PyMuPDF
+opencv-python
+pypdf
+reportlab
+pypdfium2
+pdf2image
+rapidocr-onnxruntime
+tkinterdnd2

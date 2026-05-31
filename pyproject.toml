@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "metin-atolyesi"
+version = "1.0.0"
+description = "Türkçe ve Osmanlıca metinler için OCR ve metin işleme atölyesi"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "kaligraf-ces", email = ""}
+]
+keywords = ["ocr", "turkce", "osmanli", "pdf", "metin"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft :: Windows",
+]
+dependencies = [
+    "pillow",
+    "openpyxl",
+    "python-docx",
+    "pandas",
+    "pytesseract",
+    "PyMuPDF",
+    "opencv-python",
+    "pypdf",
+    "reportlab",
+    "pypdfium2",
+    "pdf2image",
+    "rapidocr-onnxruntime",
+    "tkinterdnd2",
+    "anthropic",
+]
+
+[project.optional-dependencies]
+surya = ["surya-ocr"]
+kraken = ["kraken"]
+all = ["surya-ocr", "kraken"]
+
+[project.scripts]
+metin-atolyesi = "metin_atolyesi.__main__:main"
+
+[project.gui-scripts]
+metin-atolyesi-gui = "metin_atolyesi.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["metin_atolyesi*"]
+
+[tool.setuptools.package-data]
+metin_atolyesi = ["*.ico", "*.png", "assets/*"]
