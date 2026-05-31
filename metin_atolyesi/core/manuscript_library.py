@@ -10,6 +10,8 @@ import base64
 import hashlib
 import io
 import json
+import threading
+import time
 import zlib
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -313,7 +315,16 @@ class ManuscriptLibrary:
         trans_pages:  tuple[int, int] | None,
         meta:         ManuscriptMeta,
         progress_cb:  Any = None,
-    ) -> int:
+        stop_event:   threading.Event | None = None,
+        pause_event:  threading.Event | None = None,
+    ) -> tuple[int, bool]:
+        """Yazma+transkripsiyon çiftini öğretir.
+
+        Returns
+        -------
+        (işlenen_sayfa_sayısı, tamamlandı_mı)
+        tamamlandı_mı=False → durduruldu / yarıda kesildi, kısmi kayıt yapıldı
+        """
         if trans_pages is None:
             trans_pages = ms_pages
 
@@ -327,33 +338,59 @@ class ManuscriptLibrary:
         meta.toplam_ornek = total
         entry_id = _page_hash(ms_pdf, ms_start)
 
-        # Meta'yı dict'e çevir (iç içe dataclass'lar için özel)
-        meta_dict = self._meta_to_dict(meta)
-
         record: dict = {
-            "id":       entry_id,
-            "eser_adi": meta.eser_adi,
-            "ms_pdf":   str(ms_pdf),
-            "ms_start": ms_start,
-            "ms_end":   ms_end,
-            "meta":     meta_dict,
-            "pages":    [],
+            "id":        entry_id,
+            "eser_adi":  meta.eser_adi,
+            "ms_pdf":    str(ms_pdf),
+            "ms_start":  ms_start,
+            "ms_end":    ms_end,
+            "meta":      {},          # sonunda doldurulur
+            "pages":     [],
+            "partial":   False,
         }
 
+        done = 0
         for i in range(total):
+            # ── Durdurma sinyali ────────────────────────────────────
+            if stop_event and stop_event.is_set():
+                # Buraya kadar işlenenleri kaydet
+                if record["pages"]:
+                    record["partial"]        = True
+                    record["meta"]           = self._meta_to_dict(meta)
+                    meta.toplam_ornek        = done
+                    record["meta"]["toplam_ornek"] = done
+                    _append_jsonl(_index_path(), record)
+                return done, False
+
+            # ── Mola sinyali ────────────────────────────────────────
+            if pause_event:
+                while pause_event.is_set():
+                    time.sleep(0.15)
+                    if stop_event and stop_event.is_set():
+                        break
+
             pg_no = ms_start + i
             text  = trans_texts[i].strip()
             if not text:
+                if progress_cb:
+                    progress_cb(i + 1, total)
                 continue
+
             ph = _page_hash(ms_pdf, pg_no)
             _save_sample(ph, _extract_page_thumbnail(ms_pdf, pg_no), text)
-            record["pages"].append({"hash": ph, "ms_page": pg_no,
-                                    "has_img": bool((_lib_dir()/"samples"/f"{ph}.jpg").exists())})
+            record["pages"].append({
+                "hash":    ph,
+                "ms_page": pg_no,
+                "has_img": bool((_lib_dir() / "samples" / f"{ph}.jpg").exists()),
+            })
+            done += 1
             if progress_cb:
                 progress_cb(i + 1, total)
 
+        # Tüm sayfalar tamamlandı
+        record["meta"] = self._meta_to_dict(meta)
         _append_jsonl(_index_path(), record)
-        return total
+        return done, True
 
     @staticmethod
     def _meta_to_dict(meta: ManuscriptMeta) -> dict:

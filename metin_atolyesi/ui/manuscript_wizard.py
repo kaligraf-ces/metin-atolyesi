@@ -2,9 +2,19 @@
 from __future__ import annotations
 
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+
+
+def _fmt_dur(secs: float) -> str:
+    """Saniyeyi 'X dk Y sn' formatına çevirir."""
+    s = int(secs)
+    m, s = divmod(s, 60)
+    if m:
+        return f"{m} dk {s} sn"
+    return f"{s} sn"
 
 from metin_atolyesi.core.manuscript_library import (
     ALANLAR, DONEMLER, HAREKE_DURUMLARI, IMLA_OZELLIKLERI,
@@ -745,54 +755,105 @@ class ManuscriptWizard(tk.Toplevel):
     def _s6(self):
         _, scroll = _scrolled_frame(self._area)
 
-        # Özet kartı
+        # ── Özet kartı ───────────────────────────────────────────
         c = _card(scroll, padx=0, pady=0)
-        c.pack(fill=tk.X, padx=16, pady=(14,8))
+        c.pack(fill=tk.X, padx=16, pady=(14, 6))
         _section(c, "Öğrenme Özeti", "📋").pack(fill=tk.X)
 
         sf = tk.Frame(c, bg=_CARD)
-        sf.pack(fill=tk.X, padx=12, pady=10)
+        sf.pack(fill=tk.X, padx=12, pady=8)
 
         imla_sec = [k for k, v in self.imla_vars.items() if v.get()]
         bolumler = [r for r in self._bolum_rows if r["ad"].get()]
         harf_f   = [r for r in self._harf_rows if r["harf"].get()]
         pg_count = self.ms_end_var.get() - self.ms_start_var.get()
-        satir_oz = (f"{self.satir_min_var.get()} satır"
+        satir_oz = (f"{self.satir_min_var.get()} satır (sabit)"
                     if self.duzenli_var.get()
                     else f"{self.satir_min_var.get()}–{self.satir_max_var.get()} satır")
 
-        rows = [
-            ("Eser",         self.eser_adi_var.get() or "(isimsiz)"),
-            ("El Yazması",   Path(self.ms_path_var.get()).name),
-            ("Transkripsiyon", Path(self.trans_path_var.get()).name),
-            ("Sayfalar",     f"{self.ms_start_var.get()}–{self.ms_end_var.get()} ({pg_count} sayfa)"),
-            ("Alan",         self.alan_var.get()),
-            ("Dönem",        self.donem_var.get()),
-            ("Yazı Türü",    self.yazi_var.get()),
-            ("Hareke",       self.hareke_var.get()),
-            ("Satır Düzeni", satir_oz),
-            ("İmla Özellik", f"{len(imla_sec)} seçili"),
-            ("Metin Bölümü", f"{len(bolumler)} bölüm tanımlandı"),
-            ("Harf Formu",   f"{len(harf_f)} kayıt"),
-            ("Güven",        f"%{int(self.guven_var.get()*100)}"),
+        ozet_rows = [
+            ("Eser",           self.eser_adi_var.get() or "(isimsiz)"),
+            ("El Yazması",     Path(self.ms_path_var.get()).name
+                               if self.ms_path_var.get() else "—"),
+            ("Transkripsiyon", Path(self.trans_path_var.get()).name
+                               if self.trans_path_var.get() else "—"),
+            ("Sayfalar",       f"{self.ms_start_var.get()}–{self.ms_end_var.get()}"
+                               f"  ({pg_count} sayfa)"),
+            ("Alan / Dönem",   f"{self.alan_var.get()} · {self.donem_var.get()}"),
+            ("Yazı / Hareke",  f"{self.yazi_var.get()} · {self.hareke_var.get()}"),
+            ("Satır",          satir_oz),
+            ("İmla",           f"{len(imla_sec)} özellik seçili"),
+            ("Metin Bölümü",   f"{len(bolumler)} bölüm"),
+            ("Harf Formu",     f"{len(harf_f)} kayıt"),
+            ("Güven",          f"%{int(self.guven_var.get() * 100)}"),
         ]
 
-        for lbl, val in rows:
-            rf = tk.Frame(sf, bg=_CARD)
-            rf.pack(fill=tk.X, pady=2)
-            tk.Label(rf, text=f"{lbl}:", bg=_CARD, fg=_FG2,
-                     font=_FSB, width=18, anchor=tk.W).pack(side=tk.LEFT)
-            tk.Label(rf, text=val, bg=_CARD, fg=_FG,
-                     font=_F, anchor=tk.W).pack(side=tk.LEFT)
+        # 2 sütun grid
+        body6 = tk.Frame(sf, bg=_CARD)
+        body6.pack(fill=tk.X)
+        for idx, (lbl, val) in enumerate(ozet_rows):
+            r, col = divmod(idx, 2)
+            tk.Label(body6, text=f"{lbl}:", bg=_CARD, fg=_FG2,
+                     font=_FSB, width=16, anchor=tk.W).grid(
+                row=r, column=col * 2, sticky=tk.W, padx=(0, 4), pady=3)
+            tk.Label(body6, text=val, bg=_CARD, fg=_FG,
+                     font=_F, anchor=tk.W, wraplength=220).grid(
+                row=r, column=col * 2 + 1, sticky=tk.W, padx=(0, 24), pady=3)
 
-        # İlerleme
-        self._prog_f = tk.Frame(scroll, bg=_BG)
-        self._prog_f.pack(fill=tk.X, padx=16, pady=(8,0))
-        self._prog_bar = ttk.Progressbar(self._prog_f, mode="determinate", length=600)
-        self._prog_bar.pack(fill=tk.X, pady=(0,4))
-        self._prog_lbl = _lbl(self._prog_f, "", fg=_FG2, font=_FS)
-        self._prog_lbl.pack(anchor=tk.W)
-        self._prog_f.pack_forget()
+        # ── İlerleme Paneli (başta gizli, öğrenme başlayınca görünür) ──
+        self._prog_panel = _card(scroll, padx=0, pady=0)
+        self._prog_panel.pack(fill=tk.X, padx=16, pady=(8, 14))
+        _section(self._prog_panel, "Öğrenme İlerlemesi", "⏳").pack(fill=tk.X)
+
+        pf = tk.Frame(self._prog_panel, bg=_CARD)
+        pf.pack(fill=tk.X, padx=14, pady=10)
+
+        # Büyük ilerleme çubuğu
+        self._prog_bar = ttk.Progressbar(pf, mode="determinate", length=600)
+        self._prog_bar.pack(fill=tk.X, pady=(0, 6))
+
+        # Sayfa / yüzde satırı
+        row_pct = tk.Frame(pf, bg=_CARD)
+        row_pct.pack(fill=tk.X, pady=2)
+        self._prog_pct_lbl = tk.Label(
+            row_pct, text="—", bg=_CARD, fg=_GREEN,
+            font=("Segoe UI", 22, "bold"), anchor=tk.W)
+        self._prog_pct_lbl.pack(side=tk.LEFT)
+        self._prog_sayfa_lbl = tk.Label(
+            row_pct, text="", bg=_CARD, fg=_FG,
+            font=_FB, anchor=tk.W)
+        self._prog_sayfa_lbl.pack(side=tk.LEFT, padx=(12, 0))
+
+        # Süre satırı
+        self._prog_sure_lbl = _lbl(pf, "", fg=_FG2, font=_FS)
+        self._prog_sure_lbl.pack(anchor=tk.W, pady=(2, 8))
+
+        # Kontrol butonları
+        ctrl = tk.Frame(pf, bg=_CARD)
+        ctrl.pack(anchor=tk.W, pady=(4, 0))
+
+        self._pause_btn = _btn(ctrl, "⏸  Mola Ver",
+                               self._toggle_pause, "ghost")
+        self._pause_btn.pack(side=tk.LEFT, padx=(0, 8))
+
+        self._stop_btn = _btn(ctrl, "⏹  Durdur ve Kaydet",
+                              self._stop_learning, "danger")
+        self._stop_btn.pack(side=tk.LEFT)
+
+        self._ctrl_info_lbl = _lbl(ctrl,
+            "  ← İşlenen kısım kaydedilir, yarım kalmaz.",
+            fg=_FG3, font=_FS)
+        self._ctrl_info_lbl.pack(side=tk.LEFT, padx=(12, 0))
+
+        # Başlangıçta durum etiketi
+        self._prog_status_lbl = _lbl(pf,
+            "▶  Öğrenmeyi başlatmak için sağ alttaki butona tıklayın.",
+            fg=_FG2, font=_FS)
+        self._prog_status_lbl.pack(anchor=tk.W, pady=(10, 0))
+
+        # Butonlar başlangıçta devre dışı (henüz başlamadı)
+        self._pause_btn.configure(state=tk.DISABLED)
+        self._stop_btn.configure(state=tk.DISABLED)
 
     # ════════════════════════════════════════════════════════════════
     #  Öğrenmeyi Başlat
@@ -863,14 +924,58 @@ class ManuscriptWizard(tk.Toplevel):
             guven           = self.guven_var.get(),
         )
 
+    # ── Öğrenme kontrolü ────────────────────────────────────────────
+
+    def _toggle_pause(self):
+        """Mola ver / Devam et."""
+        if not hasattr(self, "_pause_event"):
+            return
+        if self._pause_event.is_set():
+            # Molada → devam et
+            self._pause_event.clear()
+            self._pause_btn.configure(text="⏸  Mola Ver", bg="#2a3050")
+            self._prog_status_lbl.configure(
+                text="▶  Devam ediyor…", fg=_FG2)
+        else:
+            # Çalışıyor → molaya al
+            self._pause_event.set()
+            self._pause_btn.configure(text="▶  Devam Et", bg=_AMBER)
+            self._prog_status_lbl.configure(
+                text="⏸  Mola verildi — 'Devam Et' ile sürdürün.", fg=_AMBER)
+
+    def _stop_learning(self):
+        """Dur sinyali gönder — işlenen kısmı kaydet."""
+        if not hasattr(self, "_stop_event"):
+            return
+        # Molayı kaldır (varsa) ki thread ilerleyip durdurma sinyalini görsün
+        if hasattr(self, "_pause_event"):
+            self._pause_event.clear()
+        self._stop_event.set()
+        self._stop_btn.configure(state=tk.DISABLED, text="⏳  Durduruluyor…")
+        self._pause_btn.configure(state=tk.DISABLED)
+        self._prog_status_lbl.configure(
+            text="⏹  Durduruluyor, işlenen kısım kaydediliyor…", fg=_AMBER)
+
     def _start(self):
+        # Kontrol olayları
+        self._stop_event  = threading.Event()
+        self._pause_event = threading.Event()   # set = molada
+        self._start_time  = time.time()
+
+        # Navigasyon kilitle
         self._btn_next.configure(state=tk.DISABLED, text="⏳  İşleniyor…")
         self._btn_back.configure(state=tk.DISABLED)
-        self._prog_f.pack(fill=tk.X, padx=16, pady=(8,0))
 
+        # Kontrol butonlarını aktif et
+        self._pause_btn.configure(state=tk.NORMAL)
+        self._stop_btn.configure(state=tk.NORMAL)
+        self._prog_status_lbl.configure(
+            text="▶  Öğrenme başladı…", fg=_FG2)
+
+        # Sayfa aralıkları
         ms_start = self.ms_start_var.get() - 1
         ms_end   = self.ms_end_var.get()
-        tr_start = ms_start if self.sync_var.get() else self.tr_start_var.get()-1
+        tr_start = ms_start if self.sync_var.get() else self.tr_start_var.get() - 1
         tr_end   = ms_end   if self.sync_var.get() else self.tr_end_var.get()
 
         # Metin bölümünden transkripsiyon sayfasını bul
@@ -884,40 +989,112 @@ class ManuscriptWizard(tk.Toplevel):
 
         def _run():
             try:
-                lib   = get_library()
-                count = lib.teach(
+                lib          = get_library()
+                count, done_flag = lib.teach(
                     ms_pdf       = Path(self.ms_path_var.get()),
                     trans_source = Path(self.trans_path_var.get()),
                     ms_pages     = (ms_start, ms_end),
                     trans_pages  = (tr_start, tr_end),
                     meta         = meta,
                     progress_cb  = self._on_prog,
+                    stop_event   = self._stop_event,
+                    pause_event  = self._pause_event,
                 )
-                self.after(0, lambda: self._on_done(count))
+                self.after(0, lambda: self._on_done(count, done_flag))
             except Exception as exc:
                 self.after(0, lambda: self._on_err(str(exc)))
 
         threading.Thread(target=_run, daemon=True).start()
 
-    def _on_prog(self, done, total):
-        pct = int(done / max(total,1) * 100)
+    def _on_prog(self, done: int, total: int):
+        elapsed  = time.time() - self._start_time
+        pct      = int(done / max(total, 1) * 100)
+        per_page = elapsed / max(done, 1)
+        remaining = per_page * (total - done)
+
         self._prog_bar["value"] = pct
-        self._prog_lbl.configure(text=f"Sayfa {done}/{total} işleniyor…")
+        self._prog_pct_lbl.configure(text=f"%{pct}")
+        self._prog_sayfa_lbl.configure(
+            text=f"Sayfa {done} / {total}  (Varak/Yaprak: {done})")
+        self._prog_sure_lbl.configure(
+            text=f"Geçen: {_fmt_dur(elapsed)}"
+                 + (f"   ·   Tahmini kalan: {_fmt_dur(remaining)}"
+                    if done > 0 and done < total else ""))
         self.update_idletasks()
 
-    def _on_done(self, count):
-        self._prog_bar["value"] = 100
-        self._prog_lbl.configure(text=f"✅  {count} sayfa çifti öğrenildi!", fg=_GREEN)
-        self._btn_next.configure(text="✓  Kapat", state=tk.NORMAL, command=self.destroy)
+    def _on_done(self, count: int, completed: bool):
+        elapsed = time.time() - self._start_time
+
+        # Kontrol butonlarını kapat
+        self._pause_btn.configure(state=tk.DISABLED)
+        self._stop_btn.configure(state=tk.DISABLED)
+
+        if completed:
+            self._prog_bar["value"] = 100
+            self._prog_pct_lbl.configure(text="%100", fg=_GREEN)
+            self._prog_sayfa_lbl.configure(
+                text=f"Tüm {count} sayfa tamamlandı!", fg=_GREEN)
+            self._prog_sure_lbl.configure(
+                text=f"Toplam süre: {_fmt_dur(elapsed)}", fg=_FG2)
+            self._prog_status_lbl.configure(
+                text=f"✅  {count} sayfa çifti başarıyla öğrenildi.",
+                fg=_GREEN)
+            # Bölüm başlığını güncelle
+            try:
+                for w in self._prog_panel.winfo_children():
+                    if isinstance(w, tk.Frame):
+                        for lw in w.winfo_children():
+                            if isinstance(lw, tk.Label) and "⏳" in lw.cget("text"):
+                                lw.configure(text="  ✅  Öğrenme Tamamlandı")
+                                break
+            except Exception:
+                pass
+            # Sesli bildirim (Windows)
+            try:
+                import winsound
+                winsound.MessageBeep(winsound.MB_OK)
+            except Exception:
+                pass
+            messagebox.showinfo(
+                "Öğrenme Tamamlandı",
+                f"✅  {count} sayfa çifti başarıyla öğrenildi!\n\n"
+                f"Toplam süre: {_fmt_dur(elapsed)}\n\n"
+                f"Program bundan sonra benzer el yazmalarını\n"
+                f"daha doğru okuyacak.",
+                parent=self,
+            )
+        else:
+            # Yarıda durduruldu
+            self._prog_sayfa_lbl.configure(
+                text=f"{count} sayfa kaydedildi (durduruldu)", fg=_AMBER)
+            self._prog_status_lbl.configure(
+                text=f"⏹  {count} sayfa öğrenildi ve kaydedildi.",
+                fg=_AMBER)
+            messagebox.showinfo(
+                "Öğrenme Durduruldu",
+                f"⏹  İşlem durduruldu.\n\n"
+                f"{count} sayfa çifti kaydedildi.\n\n"
+                f"Kalan sayfaları öğretmek için sihirbazı\n"
+                f"tekrar açabilirsiniz.",
+                parent=self,
+            )
+
+        self._btn_next.configure(text="✓  Kapat", state=tk.NORMAL,
+                                  command=self.destroy)
         try:
             from metin_atolyesi.core.github_sync import get_sync
             get_sync().schedule_push(delay=3.0)
         except Exception:
             pass
 
-    def _on_err(self, msg):
-        self._prog_lbl.configure(text=f"❌  {msg[:120]}", fg=_ACC2)
-        self._btn_next.configure(text="Yeniden Dene", state=tk.NORMAL, command=self._start)
+    def _on_err(self, msg: str):
+        self._pause_btn.configure(state=tk.DISABLED)
+        self._stop_btn.configure(state=tk.DISABLED)
+        self._prog_status_lbl.configure(
+            text=f"❌  {msg[:140]}", fg=_ACC2)
+        self._prog_pct_lbl.configure(text="✗", fg=_ACC2)
+        self._btn_next.configure(text="Yeniden Dene",
+                                  state=tk.NORMAL, command=self._start)
         self._btn_back.configure(state=tk.NORMAL)
 
 
