@@ -111,6 +111,7 @@ def ocr_with_claude(
     lang_hint: str = "tur",
     api_key: str = "",
     model: str = "",
+    manuscript_meta: dict | None = None,
 ) -> tuple[str, list[dict]]:
     """Claude Vision API ile OCR yapar.
 
@@ -150,9 +151,26 @@ def ocr_with_claude(
     lang_desc = _LANG_DESC.get(lang_hint, "Türkçe metin")
     b64_data, media_type = _image_to_base64(image_path)
 
+    # Few-shot eklentisi (yazma kütüphanesinden)
+    fewshot_text   = ""
+    fewshot_blocks: list[dict] = []
+    if manuscript_meta:
+        try:
+            from .manuscript_library import build_fewshot_prompt
+            fewshot_text, fewshot_blocks = build_fewshot_prompt(
+                lang_hint=lang_hint,
+                alan=manuscript_meta.get("alan", ""),
+                donem=manuscript_meta.get("donem", ""),
+                yazi_turu=manuscript_meta.get("yazi_turu", ""),
+                hareke=manuscript_meta.get("hareke", ""),
+                satir=manuscript_meta.get("satir_sayisi", 0),
+            )
+        except Exception:
+            pass
+
     prompt = f"""\
 Bu görüntüdeki {lang_desc}ni tam olarak oku ve transkripsiyonunu yap.
-
+{fewshot_text}
 Kurallar:
 - Yalnızca metni döndür — açıklama, yorum veya özet ekleme
 - Satır sonlarını ve paragraf yapısını olduğu gibi koru
@@ -163,23 +181,23 @@ Kurallar:
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
+        # Few-shot görüntü blokları + hedef görüntü + prompt
+        content: list[dict] = []
+        content.extend(fewshot_blocks)          # benzer sayfa örnekleri
+        content.append({                        # asıl sayfa
+            "type": "image",
+            "source": {
+                "type":       "base64",
+                "media_type": media_type,
+                "data":       b64_data,
+            },
+        })
+        content.append({"type": "text", "text": prompt})
+
         message = client.messages.create(
             model=model,
             max_tokens=4096,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": b64_data,
-                        },
-                    },
-                    {"type": "text", "text": prompt},
-                ],
-            }],
+            messages=[{"role": "user", "content": content}],
         )
     except Exception as exc:
         return f"[Claude OCR hatası: {exc}]", []

@@ -187,6 +187,10 @@ class MainWindow(BaseTk):
         menu.add_command(label="  📄  Metin Aktar",              command=self.export_txt)
         menu.add_command(label="  🔍  Aranabilir PDF Oluştur",   command=self.export_searchable_pdf)
         menu.add_separator()
+        menu.add_separator()
+        menu.add_command(label="  ✍  El Yazması Öğret",         command=self.open_manuscript_wizard)
+        menu.add_command(label="  📚  Yazma Kütüphanesi",        command=self.open_manuscript_library)
+        menu.add_separator()
         menu.add_command(label="  ⚙  Bağımlılıkları Denetle",   command=self.show_dependencies)
         menu.add_command(label="  ⚡  Claude API Ayarları",      command=self.open_claude_settings)
         menu.add_command(label="  🤗  HuggingFace Ayarları",     command=self.open_hf_settings)
@@ -2512,6 +2516,18 @@ class MainWindow(BaseTk):
 
         body.columnconfigure(0, weight=1)
         self.wait_window(dlg)
+
+    # -----------------------------------------------------------------------
+    # El Yazması Öğretme Sihirbazı
+    # -----------------------------------------------------------------------
+
+    def open_manuscript_wizard(self) -> None:
+        from metin_atolyesi.ui.manuscript_wizard import open_wizard
+        open_wizard(self)
+
+    def open_manuscript_library(self) -> None:
+        from metin_atolyesi.ui.manuscript_wizard import open_library_viewer
+        open_library_viewer(self)
 
     # -----------------------------------------------------------------------
     # HuggingFace ayarları
