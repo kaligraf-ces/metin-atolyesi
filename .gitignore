@@ -5,12 +5,20 @@ __pycache__/
 *.pyd
 .Python
 *.so
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+MANIFEST
 
 # Sanal ortam
 .venv/
 venv/
 env/
+ENV/
 .env
+.envrc
 
 # Proje verileri (büyük dosyalar - GitHub'a gitmez)
 projects/
@@ -31,21 +39,26 @@ temp/
 # Tesseract dil dosyaları (büyük)
 tessdata/*.traineddata
 
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
 # IDE
 .idea/
 .vscode/
 *.swp
 *~
 
-# Build
-build/
-dist/
-*.egg-info/
-.eggs/
-
 # API anahtarları (asla commit edilmez)
 config_local.json
 secrets.json
+.pypirc
+
+# Type checker
+.mypy_cache/
+.ruff_cache/
 
 # Windows
 Thumbs.db
