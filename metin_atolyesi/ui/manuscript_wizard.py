@@ -166,6 +166,11 @@ class ManuscriptWizard(tk.Toplevel):
         self.ms_path_var    = tk.StringVar()
         self.trans_path_var = tk.StringVar()
         self.eser_adi_var   = tk.StringVar()
+        # Auto-fill: önceki eser girişlerini hatırla
+        self._autofill_timer: str | None = None
+        self._autofill_done_for: str = ""
+        self._autofill_in_progress: bool = False
+        self.eser_adi_var.trace_add("write", self._autofill_debounce)
         self.yazar_var      = tk.StringVar()
         self.muellif_var    = tk.StringVar()
         self.tarih_var      = tk.StringVar()
@@ -193,9 +198,11 @@ class ManuscriptWizard(tk.Toplevel):
 
         # Adım 3 — İmla
         self.imla_vars: dict[str, tk.BooleanVar] = {}
+        self.imla_skala_vars: dict[str, tk.IntVar] = {}
         for grp_items in IMLA_OZELLIKLERI.values():
             for item in grp_items:
-                self.imla_vars[item] = tk.BooleanVar(value=False)
+                self.imla_vars[item]       = tk.BooleanVar(value=False)
+                self.imla_skala_vars[item] = tk.IntVar(value=50)
         self.imla_serbest_var    = tk.StringVar()
         self.aktarim_ilk_var     = tk.StringVar()
 
@@ -207,11 +214,20 @@ class ManuscriptWizard(tk.Toplevel):
             t: tk.BooleanVar(value=False) for t in ICERIK_TURLERI
         }
         self.mensur_manzum_var = tk.StringVar(value="Mensur")
-        self._trans_rows: list[dict] = []   # [{isaret, karsilik}]
+        self._trans_rows: list[dict] = []   # [{isaret, arap_harfi, karsilik, dosyalar}]
+
+        # Adım 2 ek — Varak/sayfa dönüşümü
+        self.varak_baslangic_var = tk.StringVar()   # örn. "85b"
+        self.varak_bitis_var     = tk.StringVar()   # örn. "212a"
 
         # Adım 4 ek — Ana metin sayfaları
         self.metin_bas_var = tk.IntVar(value=0)
         self.metin_bit_var = tk.IntVar(value=0)
+
+        # Adım 5 ek — Kelime yoğunluğu
+        self.arapca_yogun_var = tk.IntVar(value=30)
+        self.farsca_yogun_var = tk.IntVar(value=20)
+        self.turkce_yogun_var = tk.IntVar(value=50)
 
         # Adım 5 — Paleografi + alan
         self.alan_var       = tk.StringVar(value="Osmanlıca")
@@ -286,17 +302,20 @@ class ManuscriptWizard(tk.Toplevel):
         back_ok = self._step > 0 and self._step != self._SONUC_STEP
         self._btn_back.configure(state=tk.NORMAL if back_ok else tk.DISABLED)
 
-        # İleri / Başlat / Kapat
+        # İleri / Başlat / Kapat — KOMUT HER ZAMAN _go_next olmalı
         OZET = self._SONUC_STEP - 1   # = 5
         if self._step == OZET:
             self._btn_next.configure(text="✓  Öğrenmeyi Başlat",
-                                     bg=_GREEN, state=tk.NORMAL)
+                                     bg=_GREEN, state=tk.NORMAL,
+                                     command=self._go_next)
         elif self._step == self._SONUC_STEP:
             self._btn_next.configure(text="✓  Kapat",
-                                     bg=_GREEN, state=tk.NORMAL)
+                                     bg=_GREEN, state=tk.NORMAL,
+                                     command=self._go_next)
         else:
             self._btn_next.configure(text="İleri  ▶",
-                                     bg=_ACC1, state=tk.NORMAL)
+                                     bg=_ACC1, state=tk.NORMAL,
+                                     command=self._go_next)
 
     def _show_step(self, n):
         for w in self._area.winfo_children():
@@ -478,7 +497,7 @@ class ManuscriptWizard(tk.Toplevel):
         # Sütun başlıkları
         ti_hdr = tk.Frame(c4, bg=_CARD)
         ti_hdr.pack(fill=tk.X, padx=14, pady=(0, 2))
-        for txt, w in [("İşaret / Harf", 18), ("Karşılığı / Açıklama", 42), ("", 5)]:
+        for txt, w in [("Latin", 8), ("Arap Harfi", 7), ("Karşılığı / Açıklama", 34), ("📎", 3)]:
             tk.Label(ti_hdr, text=txt, bg=_CARD, fg=_FG3,
                      font=_FSB, width=w, anchor=tk.W).pack(side=tk.LEFT, padx=2)
 
@@ -512,18 +531,86 @@ class ManuscriptWizard(tk.Toplevel):
                  wraplength=660, justify=tk.LEFT, pady=8, padx=12).pack()
 
     def _add_trans_row(self, isaret=""):
-        row = {"isaret": tk.StringVar(value=isaret), "karsilik": tk.StringVar()}
+        row = {
+            "isaret":     tk.StringVar(value=isaret),
+            "arap_harfi": tk.StringVar(),   # Arap alfabesiyle gösterim
+            "karsilik":   tk.StringVar(),
+            "dosyalar":   [],               # ek dosya yolları
+        }
         self._trans_rows.append(row)
         self._render_trans_row(row)
 
     def _render_trans_row(self, row):
+        if "dosyalar" not in row:
+            row["dosyalar"] = []
         f = tk.Frame(self._trans_frame, bg=_CARD)
         f.pack(fill=tk.X, pady=1)
         row["_frame"] = f
-        _entry(f, row["isaret"],   width=14).pack(side=tk.LEFT, padx=2)
-        _entry(f, row["karsilik"], width=44).pack(side=tk.LEFT, padx=2)
+        _entry(f, row["isaret"],     width=8).pack(side=tk.LEFT, padx=2)
+        # Arap harfli gösterim (RTL destekli giriş)
+        e_ar = tk.Entry(f, textvariable=row["arap_harfi"], width=7,
+                        font=("Arial Unicode MS", 11),
+                        bg="#1c2035", fg=_FG, insertbackground=_FG,
+                        relief=tk.FLAT,
+                        highlightbackground=_BORDER, highlightthickness=1)
+        e_ar.pack(side=tk.LEFT, padx=2)
+        _entry(f, row["karsilik"],   width=34).pack(side=tk.LEFT, padx=2)
+        # Dosya ekleme butonu
+        row["_dosya_lbl"] = tk.Label(
+            f, text=f"📎{len(row['dosyalar'])}" if row["dosyalar"] else "📎",
+            bg=_CARD, fg=_FG2, font=_FS, cursor="hand2")
+        row["_dosya_lbl"].pack(side=tk.LEFT, padx=2)
+        row["_dosya_lbl"].bind("<Button-1>",
+                                lambda e, r=row: self._show_trans_dosyalar(r))
         _btn(f, "✖", lambda fr=f, r=row: self._del_trans_row(fr, r),
-             "danger").pack(side=tk.LEFT, padx=4)
+             "danger").pack(side=tk.LEFT, padx=2)
+
+    def _show_trans_dosyalar(self, row: dict):
+        """Transkripsiyon işareti için dosya ekle diyalogu."""
+        dlg = tk.Toplevel(self)
+        dlg.title("İşaret Dosyaları")
+        dlg.configure(bg=_BG)
+        dlg.geometry("480x360")
+        dlg.transient(self)
+        dlg.grab_set()
+
+        _lbl(dlg, "Bu işaret için Word / PDF / Excel / Görüntü ekleyin:",
+             fg=_FG2, font=_FS).pack(anchor=tk.W, padx=14, pady=(10,4))
+
+        lf = tk.Frame(dlg, bg=_BG)
+        lf.pack(fill=tk.BOTH, expand=True, padx=14, pady=4)
+
+        def refresh():
+            for w in lf.winfo_children(): w.destroy()
+            if not row["dosyalar"]:
+                _lbl(lf, "Henüz dosya eklenmedi.", fg=_FG3, font=_FS).pack(
+                    anchor=tk.W, pady=8)
+                return
+            for path in row["dosyalar"]:
+                rf = tk.Frame(lf, bg=_CARD)
+                rf.pack(fill=tk.X, pady=2)
+                _lbl(rf, Path(path).name[:54], fg=_FG, bg=_CARD, font=_FS).pack(
+                    side=tk.LEFT, padx=6)
+                _btn(rf, "✖",
+                     lambda p=path: (row["dosyalar"].remove(p), refresh()),
+                     "danger").pack(side=tk.RIGHT, padx=4)
+            if "_dosya_lbl" in row:
+                row["_dosya_lbl"].configure(
+                    text=f"📎{len(row['dosyalar'])}", fg=_ACC1)
+
+        def add_file():
+            ft = [("Desteklenen","*.pdf *.docx *.doc *.xlsx *.xls *.jpg *.jpeg *.png *.bmp"),
+                  ("Tüm","*.*")]
+            p = filedialog.askopenfilename(filetypes=ft, parent=dlg)
+            if p:
+                row["dosyalar"].append(p)
+                refresh()
+
+        refresh()
+        bf = tk.Frame(dlg, bg=_BG)
+        bf.pack(fill=tk.X, padx=14, pady=(4,12))
+        _btn(bf, "➕  Dosya / Görüntü Ekle", add_file, "primary").pack(side=tk.LEFT)
+        _btn(bf, "✓  Tamam", dlg.destroy, "success").pack(side=tk.RIGHT)
 
     def _del_trans_row(self, frame, row):
         frame.destroy()
@@ -548,10 +635,21 @@ class ManuscriptWizard(tk.Toplevel):
     def _s2(self):
         _, scroll = _scrolled_frame(self._area)
 
+        # ─ Sayfa/Varak açıklama ─
+        info_v = tk.Frame(scroll, bg="#0f1929")
+        info_v.pack(fill=tk.X, padx=16, pady=(14, 4))
+        tk.Label(info_v,
+                 text="ℹ  Sayfa numaraları: PDF/Word'deki sıra numarasıdır (1, 2, 3 …).\n"
+                      "Varak numarası: yazmanın kendi numaralaması (85b, 86a …).\n"
+                      "Bazı çalışmalar bir yazmanın belirli varaklarını kapsar; "
+                      "bu durumda altındaki 'İlk varak' alanını doldurun.",
+                 bg="#0f1929", fg="#7aa8cc", font=_FS,
+                 justify=tk.LEFT, padx=12, pady=6).pack(fill=tk.X)
+
         # Sayfa aralıkları
         c1 = _card(scroll, padx=0, pady=0)
-        c1.pack(fill=tk.X, padx=16, pady=(14,6))
-        _section(c1, "İşlenecek Sayfa Aralıkları", "📐").pack(fill=tk.X)
+        c1.pack(fill=tk.X, padx=16, pady=(4, 6))
+        _section(c1, "İşlenecek Sayfa Aralıkları (PDF / Word Sayfa No)", "📐").pack(fill=tk.X)
 
         pr = tk.Frame(c1, bg=_CARD)
         pr.pack(fill=tk.X, padx=12, pady=8)
@@ -565,7 +663,7 @@ class ManuscriptWizard(tk.Toplevel):
             _lbl(g, "Bitiş:", bg=_CARD, fg=_FG).grid(row=1,column=0,sticky=tk.W,pady=3)
             _spin(g, e_var).grid(row=1, column=1, padx=6, pady=3)
 
-        _pg_grp(pr, "El Yazması Sayfaları", self.ms_start_var, self.ms_end_var, 0)
+        _pg_grp(pr, "El Yazması PDF Sayfası", self.ms_start_var, self.ms_end_var, 0)
 
         sync_f = tk.Frame(pr, bg=_CARD)
         sync_f.grid(row=0, column=1, padx=12, sticky=tk.N, pady=4)
@@ -577,14 +675,29 @@ class ManuscriptWizard(tk.Toplevel):
 
         self._tr_grp_frame = tk.Frame(pr, bg=_CARD)
         self._tr_grp_frame.grid(row=0, column=2, sticky=tk.W)
-        _pg_grp(self._tr_grp_frame, "Transkripsiyon Sayfaları",
+        _pg_grp(self._tr_grp_frame, "Transkripsiyon Sayfası (PDF/Word)",
                 self.tr_start_var, self.tr_end_var, 0)
         self._toggle_sync()
 
+        # ─ Varak numaraları ─
+        cv = _card(scroll, padx=0, pady=0)
+        cv.pack(fill=tk.X, padx=16, pady=(4, 6))
+        _section(cv, "Yazma Varak Numaraları (opsiyonel)", "📜").pack(fill=tk.X)
+        vf = tk.Frame(cv, bg=_CARD)
+        vf.pack(fill=tk.X, padx=14, pady=10)
+        _lbl(vf, "İlk PDF sayfası = Varak:", bg=_CARD, fg=_FG2, font=_FSB).pack(
+            side=tk.LEFT, padx=(0,6))
+        _entry(vf, self.varak_baslangic_var, width=8).pack(side=tk.LEFT)
+        _lbl(vf, " (örn. 85b)", bg=_CARD, fg=_FG3, font=_FS).pack(side=tk.LEFT, padx=(2,16))
+        _lbl(vf, "Son PDF sayfası = Varak:", bg=_CARD, fg=_FG2, font=_FSB).pack(
+            side=tk.LEFT, padx=(0,6))
+        _entry(vf, self.varak_bitis_var, width=8).pack(side=tk.LEFT)
+        _lbl(vf, " (örn. 212a)", bg=_CARD, fg=_FG3, font=_FS).pack(side=tk.LEFT, padx=2)
+
         # Toplam varak
-        tv_f = tk.Frame(c1, bg=_CARD)
-        tv_f.pack(anchor=tk.W, padx=12, pady=(0,8))
-        _lbl(tv_f, "Toplam Varak Sayısı (opsiyonel):",
+        tv_f = tk.Frame(cv, bg=_CARD)
+        tv_f.pack(anchor=tk.W, padx=14, pady=(0, 10))
+        _lbl(tv_f, "Toplam varak sayısı:",
              bg=_CARD, fg=_FG2, font=_FSB).pack(side=tk.LEFT, padx=(0,8))
         _spin(tv_f, self.toplam_varak_var, lo=0).pack(side=tk.LEFT)
         _lbl(tv_f, "  Sütun:", bg=_CARD, fg=_FG2, font=_FSB).pack(side=tk.LEFT, padx=(16,8))
@@ -673,17 +786,39 @@ class ManuscriptWizard(tk.Toplevel):
             c.pack(fill=tk.X, padx=16, pady=4)
             _section(c, grp_name, "☑").pack(fill=tk.X)
 
-            grid = tk.Frame(c, bg=_CARD)
-            grid.pack(fill=tk.X, padx=12, pady=6)
-            for i, item in enumerate(items):
-                var = self.imla_vars[item]
-                cb  = tk.Checkbutton(grid, text=item, variable=var,
-                                     bg=_CARD, fg=_FG, font=_FS,
-                                     selectcolor="#1c2035",
-                                     activebackground=_CARD,
-                                     wraplength=320, justify=tk.LEFT,
-                                     anchor=tk.W)
-                cb.grid(row=i//2, column=i%2, sticky=tk.W, padx=8, pady=2)
+            for item in items:
+                bool_var  = self.imla_vars[item]
+                skala_var = self.imla_skala_vars[item]
+
+                rf = tk.Frame(c, bg=_CARD)
+                rf.pack(fill=tk.X, padx=10, pady=1)
+
+                # Checkbox + metin
+                cb = tk.Checkbutton(rf, text=item, variable=bool_var,
+                                    bg=_CARD, fg=_FG, font=_FS,
+                                    selectcolor="#1c2035", activebackground=_CARD,
+                                    wraplength=300, justify=tk.LEFT, anchor=tk.W,
+                                    width=38)
+                cb.pack(side=tk.LEFT)
+
+                # Değer etiketi
+                val_lbl = tk.Label(rf, text=f"{skala_var.get():3d}%",
+                                   bg=_CARD, fg=_ACC1, font=_FSB, width=5)
+                val_lbl.pack(side=tk.RIGHT, padx=(0,4))
+
+                # Slider 0-100
+                def _make_cmd(lbl, v):
+                    return lambda x: lbl.configure(
+                        text=f"{int(float(x)):3d}%",
+                        fg=(_FG3 if int(float(x))==0 else
+                            _ACC1 if int(float(x))<60 else _GREEN))
+
+                tk.Scale(rf, variable=skala_var, from_=0, to=100,
+                         orient=tk.HORIZONTAL, length=180,
+                         bg=_CARD, fg=_FG, troughcolor=_PANEL,
+                         highlightthickness=0, showvalue=False,
+                         command=_make_cmd(val_lbl, skala_var)
+                         ).pack(side=tk.RIGHT, padx=(0,4))
 
         # Serbest metin
         c2 = _card(scroll, padx=0, pady=0)
@@ -872,6 +1007,36 @@ class ManuscriptWizard(tk.Toplevel):
         _btn(c2, "➕  Harf Formu Ekle",
              self._add_harf, "ghost").pack(anchor=tk.W, padx=12, pady=(4,10))
 
+        # ─ Kelime Yoğunluğu ─
+        cw = _card(scroll, padx=0, pady=0)
+        cw.pack(fill=tk.X, padx=16, pady=6)
+        _section(cw, "Yaklaşık Kelime Yoğunluğu", "📊").pack(fill=tk.X)
+        tk.Label(cw,
+                 text="Metindeki Arapça / Farsça / Türkçe kelime oranı (yaklaşık %)",
+                 bg=_CARD, fg=_FG2, font=_FS, padx=14, pady=4,
+                 anchor=tk.W).pack(fill=tk.X)
+        wf = tk.Frame(cw, bg=_CARD)
+        wf.pack(fill=tk.X, padx=14, pady=(2,10))
+
+        def _yogun_row(parent, label, var):
+            rf = tk.Frame(parent, bg=_CARD)
+            rf.pack(fill=tk.X, pady=2)
+            tk.Label(rf, text=label, bg=_CARD, fg=_FG2, font=_FSB, width=14,
+                     anchor=tk.W).pack(side=tk.LEFT)
+            pct_lbl = tk.Label(rf, text=f"{var.get():3d}%",
+                               bg=_CARD, fg=_ACC1, font=_FSB, width=5)
+            pct_lbl.pack(side=tk.LEFT, padx=4)
+            tk.Scale(rf, variable=var, from_=0, to=100,
+                     orient=tk.HORIZONTAL, length=220,
+                     bg=_CARD, fg=_FG, troughcolor=_PANEL,
+                     highlightthickness=0, showvalue=False,
+                     command=lambda v, l=pct_lbl: l.configure(
+                         text=f"{int(float(v)):3d}%")).pack(side=tk.LEFT)
+
+        _yogun_row(wf, "Arapça:", self.arapca_yogun_var)
+        _yogun_row(wf, "Farsça:",  self.farsca_yogun_var)
+        _yogun_row(wf, "Türkçe:", self.turkce_yogun_var)
+
         # Genel notlar
         c3 = _card(scroll, padx=0, pady=0)
         c3.pack(fill=tk.X, padx=16, pady=(6,14))
@@ -996,11 +1161,43 @@ class ManuscriptWizard(tk.Toplevel):
                         text=f"🖼 {len(row['goruntular'])}")
                 refresh()
 
+        def paste_img():
+            """Panodan görüntü yapıştır (Win: PrintScreen / Ctrl+C sonrası)."""
+            try:
+                from PIL import ImageGrab
+                img = ImageGrab.grabclipboard()
+                if img is None:
+                    messagebox.showwarning("Pano",
+                        "Panoda görüntü yok.\n"
+                        "Önce ekran görüntüsü alın (PrtScr) veya\n"
+                        "bir görüntüyü kopyalayın.", parent=dlg)
+                    return
+                import tempfile, os
+                tmp_dir = Path.home() / ".metin_atolyesi"
+                tmp_dir.mkdir(parents=True, exist_ok=True)
+                tmp = tempfile.NamedTemporaryFile(
+                    suffix=".png", delete=False,
+                    dir=str(tmp_dir))
+                img.save(tmp.name)
+                tmp.close()
+                row["goruntular"].append(tmp.name)
+                if "_img_lbl" in row:
+                    row["_img_lbl"].configure(
+                        text=f"🖼 {len(row['goruntular'])}")
+                refresh()
+            except ImportError:
+                messagebox.showwarning("PIL Gerekli",
+                    "Pano yapıştırma için Pillow gerekli.\n"
+                    "pip install Pillow", parent=dlg)
+            except Exception as exc:
+                messagebox.showerror("Hata", str(exc), parent=dlg)
+
         refresh()
 
         btn_f = tk.Frame(dlg, bg=_BG)
         btn_f.pack(fill=tk.X, padx=14, pady=(4,12))
-        _btn(btn_f, "➕  Görüntü Ekle", add_img, "primary").pack(side=tk.LEFT)
+        _btn(btn_f, "➕  Görüntü Ekle", add_img, "primary").pack(side=tk.LEFT, padx=(0,6))
+        _btn(btn_f, "📋  Panodan Yapıştır", paste_img, "ghost").pack(side=tk.LEFT)
         _btn(btn_f, "✓  Tamam", dlg.destroy, "success").pack(side=tk.RIGHT)
 
     # ════════════════════════════════════════════════════════════════
@@ -1176,17 +1373,30 @@ class ManuscriptWizard(tk.Toplevel):
             icerik_turleri  = [k for k, v in self.icerik_vars.items() if v.get()],
             mensur_manzum   = self.mensur_manzum_var.get(),
             trans_isaretleri = [
-                {"isaret": r["isaret"].get(), "karsilik": r["karsilik"].get()}
-                for r in self._trans_rows
-                if r["isaret"].get()
+                {"isaret":     r["isaret"].get(),
+                 "arap_harfi": r.get("arap_harfi", tk.StringVar()).get()
+                               if isinstance(r.get("arap_harfi"), tk.StringVar)
+                               else r.get("arap_harfi",""),
+                 "karsilik":   r["karsilik"].get(),
+                 "dosyalar":   r.get("dosyalar",[])}
+                for r in self._trans_rows if r["isaret"].get()
             ],
+            varak_baslangic = self.varak_baslangic_var.get().strip(),
+            varak_bitis     = self.varak_bitis_var.get().strip(),
             metin_baslangic = self.metin_bas_var.get(),
             metin_bitis     = self.metin_bit_var.get(),
             imla_secimler   = [k for k, v in self.imla_vars.items() if v.get()],
+            imla_skalalar   = {k: v.get() for k, v in self.imla_skala_vars.items()
+                               if self.imla_vars[k].get()},
             imla_serbest    = imla_st,
             aktarim_ilkeleri = aktarim,
             metin_bolumleri = bolumleri,
             kaynak_turu     = self.kaynak_turu_var.get(),
+            kelime_yogunlugu = {
+                "Arapça": self.arapca_yogun_var.get(),
+                "Farsça":  self.farsca_yogun_var.get(),
+                "Türkçe": self.turkce_yogun_var.get(),
+            },
             harf_formlari   = [
                 HarfFormu(
                     harf          = r["harf"].get(),
@@ -1366,12 +1576,9 @@ class ManuscriptWizard(tk.Toplevel):
         except Exception:
             pass
 
-        # Sonuç sekmesine git
-        self._btn_next.configure(
-            text="📊  Sonuçları Görüntüle  ▶", state=tk.NORMAL,
-            bg=_ACC1,
-            command=lambda: self._show_step(self._SONUC_STEP))
-        self._btn_back.configure(state=tk.NORMAL)
+        # Sonuç sekmesine git — _update_bar komutunu sıfırlar, biz sadece adımı değiştiriyoruz
+        self._learning_done = True
+        self._show_step(self._SONUC_STEP)
 
     def _on_err(self, msg: str):
         self._pause_btn.configure(state=tk.DISABLED)
@@ -1383,6 +1590,166 @@ class ManuscriptWizard(tk.Toplevel):
                                   state=tk.NORMAL, command=self._start)
         self._btn_back.configure(state=tk.NORMAL)
 
+    # ════════════════════════════════════════════════════════════════
+    #  AUTO-FILL — Daha önce girilen eser bilgilerini yükle
+    # ════════════════════════════════════════════════════════════════
+
+    def _autofill_debounce(self, *_):
+        """Eser adı değişince 700 ms bekle, sonra kütüphanede ara."""
+        if self._autofill_in_progress:
+            return
+        if self._autofill_timer:
+            try:
+                self.after_cancel(self._autofill_timer)
+            except Exception:
+                pass
+        self._autofill_timer = self.after(700, self._autofill_check)
+
+    def _autofill_check(self):
+        """Eser adıyla eşleşen önceki kayıt varsa teklif et."""
+        self._autofill_timer = None
+        if self._autofill_in_progress:
+            return
+        name = self.eser_adi_var.get().strip()
+        if len(name) < 2 or name.lower() == self._autofill_done_for.lower():
+            return
+        try:
+            lib     = get_library()
+            entries = lib.list_entries()
+        except Exception:
+            return
+        for entry in reversed(entries):
+            if entry.get("eser_adi", "").strip().lower() == name.lower():
+                self._offer_autofill(entry)
+                return
+
+    def _offer_autofill(self, entry: dict):
+        """Önceki kayıt bulundu diyalogu."""
+        self._autofill_done_for = self.eser_adi_var.get().strip()
+        if messagebox.askyesno(
+            "Önceki Kayıt Bulundu",
+            f"'{entry.get('eser_adi')}' adlı eser daha önce sisteme girilmiş.\n\n"
+            "Önceki giriş bilgilerini (el yazması yolu, imla, yapı, paleografi…)\n"
+            "otomatik doldurmak ister misiniz?",
+            parent=self,
+        ):
+            self._do_autofill(entry)
+
+    def _do_autofill(self, entry: dict):
+        """Kayıttaki tüm meta bilgileri wizard değişkenlerine yükler."""
+        self._autofill_in_progress = True
+        try:
+            meta = entry.get("meta", {})
+
+            # ── Temel kimlik ────────────────────────────────────────
+            self.yazar_var.set(meta.get("yazar", ""))
+            self.muellif_var.set(meta.get("muellif", ""))
+            self.tarih_var.set(meta.get("istinsah_tarihi", ""))
+            self.kutuphane_var.set(meta.get("kutuphanesi", ""))
+            self.demir_no_var.set(meta.get("demirbaş_no", ""))
+            self.tez_ref_var.set(meta.get("tez_referansi", ""))
+            self.kaynak_turu_var.set(meta.get("kaynak_turu", "transkripsiyon"))
+
+            # ── El yazması dosya yolu (mevcutsa) ────────────────────
+            ms_pdf = entry.get("ms_pdf", "")
+            if ms_pdf and Path(ms_pdf).exists():
+                self.ms_path_var.set(ms_pdf)
+
+            # ── Sayfa aralıkları ────────────────────────────────────
+            self.ms_start_var.set(entry.get("ms_start", 0) + 1)
+            self.ms_end_var.set(entry.get("ms_end", 10))
+
+            # ── Varak bilgisi ───────────────────────────────────────
+            self.varak_baslangic_var.set(meta.get("varak_baslangic", ""))
+            self.varak_bitis_var.set(meta.get("varak_bitis", ""))
+            self.toplam_varak_var.set(meta.get("toplam_varak", 0))
+            self.sutun_var.set(meta.get("sutun_sayisi", 1))
+
+            vs = meta.get("varak_satir", {})
+            self.satir_min_var.set(vs.get("genel_min", 15))
+            self.satir_max_var.set(vs.get("genel_max", 15))
+            self.duzenli_var.set(vs.get("duzenli", True))
+            self.ilk_varak_satir_var.set(vs.get("ilk_varak", 0))
+            self.son_varak_satir_var.set(vs.get("son_varak", 0))
+            self.baslik_satir_var.set(vs.get("baslik_varak", 0))
+            self.ozel_varaklar_var.set(vs.get("ozel_varaklar", ""))
+            self.varak_not_var.set(vs.get("notlar", ""))
+
+            # ── İmla ────────────────────────────────────────────────
+            imla_sec  = set(meta.get("imla_secimler", []))
+            imla_skal = meta.get("imla_skalalar", {})
+            for k, v in self.imla_vars.items():
+                v.set(k in imla_sec)
+            for k, v in self.imla_skala_vars.items():
+                if k in imla_skal:
+                    v.set(imla_skal[k])
+            self.imla_serbest_var.set(meta.get("imla_serbest", ""))
+            self.aktarim_ilk_var.set(meta.get("aktarim_ilkeleri", ""))
+
+            # ── İçerik türü / üslup ─────────────────────────────────
+            icerik_sec = set(meta.get("icerik_turleri", []))
+            for k, v in self.icerik_vars.items():
+                v.set(k in icerik_sec)
+            self.mensur_manzum_var.set(meta.get("mensur_manzum", "Mensur"))
+
+            # ── Transkripsiyon işaretleri ───────────────────────────
+            self._trans_rows.clear()
+            for rd in meta.get("trans_isaretleri", []):
+                self._trans_rows.append({
+                    "isaret":     tk.StringVar(value=rd.get("isaret", "")),
+                    "arap_harfi": tk.StringVar(value=rd.get("arap_harfi", "")),
+                    "karsilik":   tk.StringVar(value=rd.get("karsilik", "")),
+                    "dosyalar":   list(rd.get("dosyalar", [])),
+                })
+
+            # ── Alan / yazı sistemi ─────────────────────────────────
+            self.alan_var.set(meta.get("alan", "Osmanlıca"))
+            self.donem_var.set(meta.get("donem", "Belirsiz"))
+            self.yazi_var.set(meta.get("yazi_turu", "Nesih"))
+            self.hareke_var.set(meta.get("hareke", "Harekesiz"))
+            self.guven_var.set(meta.get("guven", 0.9))
+            self.ozel_not_var.set(meta.get("ozel_notlar", ""))
+
+            # Dil kodu → görüntü etiketi (ilk eşleşen)
+            dil_kodu = meta.get("dil_kodu", "ara")
+            dil_gorunum_etiket = DIL_GORUNUM_LISTE[0]
+            for etk, kod in DIL_GORUNUM.items():
+                if kod == dil_kodu:
+                    dil_gorunum_etiket = etk
+                    break
+            self.dil_var.set(dil_gorunum_etiket)
+
+            # ── Kelime yoğunluğu ────────────────────────────────────
+            ky = meta.get("kelime_yogunlugu", {})
+            self.arapca_yogun_var.set(ky.get("Arapça", 30))
+            self.farsca_yogun_var.set(ky.get("Farsça",  20))
+            self.turkce_yogun_var.set(ky.get("Türkçe", 50))
+
+            # ── Harf formları ────────────────────────────────────────
+            self._harf_rows.clear()
+            for hf in meta.get("harf_formlari", []):
+                self._harf_rows.append({
+                    "harf":      tk.StringVar(value=hf.get("harf", "")),
+                    "konum":     tk.StringVar(value=hf.get("konum", "baş")),
+                    "kelime":    tk.StringVar(value=hf.get("ornek_kelime", "")),
+                    "acikl":     tk.StringVar(value=hf.get("aciklama", "")),
+                    "goruntular": list(hf.get("goruntu_yollar", [])),
+                })
+
+            # ── Metin bölümleri ─────────────────────────────────────
+            self._bolum_rows.clear()
+            for bm in meta.get("metin_bolumleri", []):
+                self._bolum_rows.append({
+                    "ad":   tk.StringVar(value=bm.get("ad", "")),
+                    "bas":  tk.IntVar(value=bm.get("baslangic", 0)),
+                    "bit":  tk.IntVar(value=bm.get("bitis", 0)),
+                    "not_": tk.StringVar(value=bm.get("aciklama", "")),
+                })
+            self.metin_bas_var.set(meta.get("metin_baslangic", 0))
+            self.metin_bit_var.set(meta.get("metin_bitis", 0))
+
+        finally:
+            self._autofill_in_progress = False
 
     # ════════════════════════════════════════════════════════════════
     #  ADIM 7 — Sonuç: Öğrenilen İçerik

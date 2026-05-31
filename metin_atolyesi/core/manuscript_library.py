@@ -87,9 +87,9 @@ _KOD_TO_GORUNUM: dict[str, str] = {}
 for _lbl, _kod in DIL_GORUNUM.items():
     _KOD_TO_GORUNUM.setdefault(_kod, _lbl)
 
-# İmla hususiyetleri seçenekleri (kategorili)
+# İmla hususiyetleri seçenekleri (kategorili — slider 0-100 ile birlikte)
 IMLA_OZELLIKLERI: dict[str, list[str]] = {
-    "Ünlü Yazımı": [
+    "Ünlü Yazımı (Genel)": [
         "Uzun ünlüler için elif/vav/ye tutarlı kullanımı",
         "Uzun ünlüler bazen yazılmamış (defektif yazım)",
         "İnce/kalın ünlü ayrımı gözetilmemiş",
@@ -97,15 +97,39 @@ IMLA_OZELLIKLERI: dict[str, list[str]] = {
         "Elif-maksura kullanımı",
         "Matla / hemze-i vasl tutarsızlığı",
     ],
+    "Ünlü Gösterimi — Konuma Göre": [
+        "Başta ünlüler harfle gösterilmiş (elif/vav/ye)",
+        "Ortada ünlüler harfle gösterilmiş",
+        "Sonda a / e : elif ile gösterim",
+        "Sonda a / e : güzel he (ة/ه) ile gösterim",
+        "Sonda a / e : hareke (fetha) ile gösterim",
+        "Sonda o / ö / u / ü : vav ile gösterim",
+        "Sonda o / ö / u / ü : hareke (zamme) ile gösterim",
+        "Sonda ı / i : ye ile gösterim",
+        "Sonda ı / i : hareke (kesre) ile gösterim",
+    ],
     "Ünsüz Yazımı": [
         "Sin-şın karışıklığı / tercihi",
         "Kef-gef / nun-i Farsî ayrımı",
         "Pe-be karışıklığı",
+        "C-ç karışıklığı (cim / çim)",
         "Ze-zı/zal ayrımı tutarsız",
         "Şedde (teşdid) kullanımı tutarsız",
+        "Türkçe kelimelerde şedde kullanımı",
+        "Nazal n için nun-kef (نك) kullanımı",
         "Hemze yazımı tutarsız",
     ],
+    "Türkçe Ekler ve Yapı": [
+        "Eklerin ayrık yazımı (kök + ek boşluklu)",
+        "Türkçe kelime köklerinde ünlü harfleri yazılmış",
+        "Türkçe yapım ekleri bitişik yazılmış",
+        "Fiil çekimlerinde özel imlâ tercihleri",
+        "Türkçe kelimeler kıyasla az sesli harf kullanılmış",
+        "Türkçe-Arapça karma sözdizimi",
+    ],
     "Sayfa Düzeni": [
+        "Başlıklar çerçeve (levha) içinde",
+        "Başlıklar satır arasında (inline)",
         "Başlıklar kırmızı mürekkeple (rubrication)",
         "Bölüm başları özel işaretli",
         "Haşiye / derkenar notlar mevcut",
@@ -113,15 +137,18 @@ IMLA_OZELLIKLERI: dict[str, list[str]] = {
         "Sair satır/mısra düzeni",
         "Tablo/cetvel içeren sayfalar var",
     ],
-    "Özel İşaretler": [
+    "Özel İşaretler ve Dualar": [
         "Özel kısaltmalar kullanılmış",
         "Ebced / rakam sistemi kullanılmış",
         "Vakıf/durak işaretleri",
         "Tezhip/süsleme ögeleri",
         "Sonradan eklenen notlar/düzeltmeler",
         "Lakuna (boşluk/eksik) yerleri var",
+        "Kuran ayetleri sık alıntılanmış",
+        "Hadis metinleri sık alıntılanmış",
+        "Salavat / radiyallahu / tebareke ibareleri sık",
     ],
-    "Dil Özellikleri": [
+    "Dil ve Kelime Yapısı": [
         "Arapça-Farsça tamlamalar yaygın",
         "Türkçe sözdizimi belirgin",
         "Karma dil (makarna) kullanımı",
@@ -214,20 +241,28 @@ class ManuscriptMeta:
     varak_satir:     VarakSatirBilgisi = field(default_factory=VarakSatirBilgisi)
 
     # ── İmla hususiyetleri ───────────────────────────────────────────
-    imla_secimler:   list[str] = field(default_factory=list)   # checkbox seçimleri
-    imla_serbest:    str       = ""                            # serbest metin
-    aktarim_ilkeleri: str      = ""                            # transkripsiyon kuralları
+    imla_secimler:   list[str]      = field(default_factory=list)  # seçili maddeler
+    imla_skalalar:   dict[str, int] = field(default_factory=dict)  # madde → 0-100
+    imla_serbest:    str            = ""
+    aktarim_ilkeleri: str           = ""
 
     # ── İçerik bilgisi ───────────────────────────────────────────────
-    icerik_turleri:   list[str] = field(default_factory=list)  # ilmihal, tefsir vb.
-    mensur_manzum:    str       = "Mensur"                     # Mensur / Manzum / Karışık
-    trans_isaretleri: list[dict] = field(default_factory=list) # [{isaret, karsilik}]
+    icerik_turleri:   list[str]  = field(default_factory=list)
+    mensur_manzum:    str        = "Mensur"
+    trans_isaretleri: list[dict] = field(default_factory=list)  # [{isaret, arap_harfi, karsilik, dosyalar}]
+
+    # ── Sayfa / Varak eşlemesi ───────────────────────────────────────
+    varak_baslangic: str = ""   # PDF sayfa 1 = hangi varak (örn. "85b")
+    varak_bitis:     str = ""   # son sayfa = hangi varak (örn. "212a")
 
     # ── Kaynak yapısı ────────────────────────────────────────────────
-    metin_baslangic:  int  = 0    # ana metin başlangıç sayfası
-    metin_bitis:      int  = 0    # ana metin bitiş sayfası
+    metin_baslangic:  int  = 0
+    metin_bitis:      int  = 0
     metin_bolumleri:  list[MetinBolumu] = field(default_factory=list)
     kaynak_turu:      str = "transkripsiyon"
+
+    # ── Kelime yoğunluğu ─────────────────────────────────────────────
+    kelime_yogunlugu: dict[str, int] = field(default_factory=dict)  # {"Arapça":40, "Türkçe":50, ...}
 
     # ── Paleografi ───────────────────────────────────────────────────
     harf_formlari:   list[HarfFormu] = field(default_factory=list)
@@ -351,12 +386,12 @@ class ManuscriptLibrary:
         progress_cb:  Any = None,
         stop_event:   threading.Event | None = None,
         pause_event:  threading.Event | None = None,
-    ) -> tuple[int, bool]:
+    ) -> tuple[int, bool, str]:
         """Yazma+transkripsiyon çiftini öğretir.
 
         Returns
         -------
-        (işlenen_sayfa_sayısı, tamamlandı_mı)
+        (işlenen_sayfa_sayısı, tamamlandı_mı, entry_id)
         tamamlandı_mı=False → durduruldu / yarıda kesildi, kısmi kayıt yapıldı
         """
         if trans_pages is None:
