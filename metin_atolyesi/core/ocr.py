@@ -122,6 +122,11 @@ def ocr_image(
     psm: int = 6,
     manuscript_meta: dict | None = None,
 ) -> tuple[str, list[dict[str, object]]]:
+    # ── Surya OCR (el yazması için özel model) ────────────────────────────
+    if engine == "surya":
+        text, suspicious = ocr_image_with_surya(path, lang)
+        return text, suspicious + find_uncertain_words(text)
+
     # ── Transkribus HTR ────────────────────────────────────────────────────
     if engine == "transkribus":
         from .transkribus_ocr import ocr_with_transkribus
@@ -181,8 +186,16 @@ def ocr_image(
                     os.environ["TESSDATA_PREFIX"] = str(_td)
                     break
             pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
-            text = pytesseract.image_to_string(
-                Image.open(path), lang=lang, config=f"--psm {psm}")
+            pil_img = Image.open(path)
+            try:
+                text = pytesseract.image_to_string(
+                    pil_img, lang=lang, config=f"--psm {psm}")
+            except UnicodeDecodeError:
+                # Windows'ta PDF24/eski Tesseract CP1254 çıktı verebilir
+                raw = pytesseract.image_to_string(
+                    pil_img, lang=lang, config=f"--psm {psm}",
+                    output_type=pytesseract.Output.BYTES)
+                text = raw.decode("cp1254", errors="replace") if isinstance(raw, bytes) else str(raw)
             text = preserve_transcription(text)
             return text, find_suspicious_words(text) + find_uncertain_words(text)
         except Exception:
@@ -365,6 +378,50 @@ def ocr_image_with_easyocr(path: Path, lang: str = "tr+en") -> tuple[str, list[d
         return text, find_suspicious_words(text) + find_uncertain_words(text)
     except Exception as exc:
         return "", [{"word": str(exc)[:40], "start": 0, "end": 0, "confidence": 0.0}]
+
+
+def ocr_image_with_surya(path: Path, lang: str = "ara") -> tuple[str, list[dict[str, object]]]:
+    """Surya OCR — el yazması, tarihi belge ve Arap hatlı metinler için.
+
+    Kurulum: pip install surya-ocr
+    İlk çalışmada model dosyaları otomatik indirilir (~1 GB).
+    """
+    if not module_available("surya"):
+        return "", []
+    try:
+        from surya.recognition import batch_recognition
+        from surya.model.recognition.model import load_model as load_rec_model
+        from surya.model.recognition.processor import load_processor
+        from PIL import Image as _Image
+
+        # Dil kodunu Surya formatına çevir
+        _lang_map = {
+            "ara": ["ar"], "tur": ["tr"], "tur+ara": ["tr", "ar"],
+            "eng": ["en"], "fas": ["fa"], "ar": ["ar"], "tr": ["tr"],
+        }
+        langs_list = _lang_map.get(lang, ["ar", "tr"])
+
+        # Model önbelleği (ilk yüklemede yavaş)
+        if not hasattr(ocr_image_with_surya, "_model"):
+            ocr_image_with_surya._model    = load_rec_model()
+            ocr_image_with_surya._processor = load_processor()
+
+        model    = ocr_image_with_surya._model
+        processor = ocr_image_with_surya._processor
+
+        image = _Image.open(path).convert("RGB")
+        predictions = batch_recognition([image], [langs_list], model, processor)
+
+        if predictions and predictions[0].text_lines:
+            lines = [tl.text for tl in predictions[0].text_lines if tl.text.strip()]
+            text  = "\n".join(lines)
+        else:
+            text = ""
+
+        text = preserve_transcription(text)
+        return text, find_suspicious_words(text) + find_uncertain_words(text)
+    except Exception as exc:
+        return "", [{"word": str(exc)[:60], "start": 0, "end": 0, "confidence": 0.0}]
 
 
 # ---------------------------------------------------------------------------

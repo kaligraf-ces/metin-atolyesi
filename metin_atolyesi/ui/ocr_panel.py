@@ -79,9 +79,10 @@ TOOLTIPS: dict[str, str] = {
         "• Windows OCR: Windows yerleşik, kurulum gerekmez\n"
         "• RapidOCR: Hafif alternatif (pip install rapidocr-onnxruntime)\n"
         "• EasyOCR: Arapça desteği (pip install easyocr)\n"
-        "• Transkribus 📜: HTR derin öğrenme, Osmanlıca için en iyi açık kaynak\n"
-        "  UNESCO & devlet arşivleri standardı — hesap gerekli\n"
-        "• Claude ⚡: AI destekli, el yazması için en yüksek kalite"
+        "• Surya 🖋: El yazması için özel derin öğrenme modeli\n"
+        "  Tarihi belgeler, zor el yazıları için ideal (pip install surya-ocr)\n"
+        "• Transkribus 📜: HTR — bu ağdan erişilemiyor\n"
+        "• Claude ⚡: AI destekli, Osmanlıca için en yüksek kalite"
     ),
     "mod": (
         "Görüntü ön işleme:\n"
@@ -282,7 +283,7 @@ class OcrPanel(ttk.Frame):
         engine_cb = ttk.Combobox(
             r1, textvariable=self._engine_var,
             values=["otomatik", "tesseract", "windows", "rapidocr", "easyocr",
-                    "transkribus 📜", "claude ⚡"],
+                    "surya 🖋", "transkribus 📜", "claude ⚡"],
             state="readonly", width=15,
         )
         engine_cb.pack(side=tk.LEFT, padx=(2, 6))
@@ -1853,6 +1854,19 @@ class OcrPanel(ttk.Frame):
                     "RapidOCR Kurulu Değil",
                     "RapidOCR kurulmamış:\n\n"
                     "    pip install rapidocr-onnxruntime",
+                )
+
+        elif "surya" in eng:
+            self._engine_var.set("surya")
+            import importlib.util
+            if importlib.util.find_spec("surya") is None:
+                messagebox.showinfo(
+                    "Surya OCR Kurulu Değil",
+                    "Surya OCR kurulmamış. El yazması için özel geliştirilmiş model:\n\n"
+                    "    pip install surya-ocr\n\n"
+                    "İlk kullanımda model dosyaları indirilir (~1 GB).\n"
+                    "Arapça/Osmanlıca el yazması için EasyOCR ve Claude'a göre\n"
+                    "daha iyi satır tanıma yapar.",
                 )
 
         elif "transkribus" in eng:

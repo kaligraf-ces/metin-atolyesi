@@ -171,6 +171,298 @@ class MainWindow(BaseTk):
         )
         self._yazma_nav_btn.pack(side=tk.LEFT, padx=1)
 
+        tk.Frame(bar, bg=self._TB_SEP, width=1).pack(
+            side=tk.LEFT, fill=tk.Y, pady=5, padx=4)
+
+        # Yapay Zeka Asistan sekmesi
+        self._ai_nav_btn = tk.Button(
+            bar, text="  🤖  Yapay Zeka  ",
+            bg=self._TB_BTN, fg=self._TB_FG,
+            font=("Segoe UI", 10, "bold"),
+            relief=tk.FLAT, pady=10,
+            activebackground=self._TB_SEP, activeforeground=self._TB_FG,
+            bd=0, cursor="hand2",
+            command=lambda: self._set_mode("ai"),
+        )
+        self._ai_nav_btn.pack(side=tk.LEFT, padx=1)
+
+    def _build_ai_panel(self) -> None:
+        """Yapay Zeka Paneli'ni oluştur ve tüm araç işleyicilerini bağla."""
+        from metin_atolyesi.ui.ai_panel import AIPanel
+
+        def _get_context() -> dict:
+            """Mevcut program durumunu döndür."""
+            ctx: dict = {}
+            try:
+                ctx["toplam_sayfa"] = len(self.project.pages)
+                ctx["aktif_sayfa_no"] = self.project.current_page
+                page = self.project.pages[self.project.current_page]
+                ctx["aktif_metin"] = page.text or ""
+                ctx["aktif_sayfa_etiketi"] = page.label or str(self.project.current_page + 1)
+            except Exception:
+                pass
+            try:
+                if hasattr(self, "ocr_panel"):
+                    ctx["motor"] = self.ocr_panel._engine_var.get()
+                    ctx["dil"]   = self.ocr_panel._lang_code_var.get()
+                    ctx["el_yazmasi_meta"] = self.ocr_panel._ms_meta or {}
+            except Exception:
+                pass
+            return ctx
+
+        # ── Araç işleyicileri ───────────────────────────────────────────────
+        def _tool_ocr_calistir(inp: dict) -> str:
+            sayfalar = inp.get("sayfalar", "aktif")
+            motor    = inp.get("motor")
+            dil      = inp.get("dil")
+            try:
+                if motor and hasattr(self, "ocr_panel"):
+                    self.ocr_panel._engine_var.set(motor)
+                if dil and hasattr(self, "ocr_panel"):
+                    self.ocr_panel._lang_code_var.set(dil)
+                if sayfalar == "tumu":
+                    self.ocr_panel._scope_var.set("tümü")
+                elif sayfalar == "aktif":
+                    self.ocr_panel._scope_var.set("görünen")
+                else:
+                    self.ocr_panel._scope_var.set("seçim")
+                    self.ocr_panel._page_sel_var.set(sayfalar)
+                self.after(0, self.ocr_panel._start_ocr)
+                return f"OCR başlatıldı (sayfalar={sayfalar}, motor={motor or 'mevcut'})"
+            except Exception as e:
+                return f"Hata: {e}"
+
+        def _tool_metin_al(inp: dict) -> str:
+            try:
+                sayfa_no = inp.get("sayfa")
+                if inp.get("tum_proje"):
+                    return "\n---\n".join(
+                        f"[Sayfa {i+1}]\n{p.text or ''}"
+                        for i, p in enumerate(self.project.pages)
+                    )
+                idx = (sayfa_no - 1) if sayfa_no else self.project.current_page
+                return self.project.pages[idx].text or "(boş)"
+            except Exception as e:
+                return f"Hata: {e}"
+
+        def _tool_metin_guncelle(inp: dict) -> str:
+            try:
+                metin  = inp["metin"]
+                sayfa_no = inp.get("sayfa")
+                idx = (sayfa_no - 1) if sayfa_no else self.project.current_page
+                self.project.pages[idx].text = metin
+                if idx == self.project.current_page:
+                    self.after(0, lambda: self.ocr_panel._load_page()
+                               if hasattr(self, "ocr_panel") else None)
+                return f"Sayfa {idx+1} metni güncellendi ({len(metin)} karakter)."
+            except Exception as e:
+                return f"Hata: {e}"
+
+        def _tool_bul_degistir(inp: dict) -> str:
+            try:
+                aranan  = inp["aranan"]
+                yeni    = inp["yeni"]
+                tum     = inp.get("tum_proje", False)
+                regex   = inp.get("regex", False)
+                count   = 0
+                import re as _re
+                pages = self.project.pages if tum else [self.project.pages[self.project.current_page]]
+                for page in pages:
+                    if not page.text:
+                        continue
+                    if regex:
+                        new_t, n = _re.subn(aranan, yeni, page.text)
+                    else:
+                        new_t = page.text.replace(aranan, yeni)
+                        n = page.text.count(aranan)
+                    page.text = new_t
+                    count += n
+                return f"{count} değişiklik yapıldı ({'tüm proje' if tum else 'aktif sayfa'})."
+            except Exception as e:
+                return f"Hata: {e}"
+
+        def _tool_duzeltme_ekle(inp: dict) -> str:
+            try:
+                yanlis = inp["yanlis"]
+                dogru  = inp["dogru"]
+                kapsam = inp.get("kapsam", "global")
+                self.corrections.teach(yanlis, dogru, scope=kapsam)
+                return f"Düzeltme kaydedildi: '{yanlis}' → '{dogru}' ({kapsam})"
+            except Exception as e:
+                return f"Hata: {e}"
+
+        def _tool_duzeltmeleri_listele(inp: dict) -> str:
+            try:
+                filtre = inp.get("filtre", "")
+                pairs = list(self.corrections.all_entries())  # (wrong, correct, scope)
+                if filtre:
+                    pairs = [(w, c, s) for w, c, s in pairs if filtre in w or filtre in c]
+                if not pairs:
+                    return "Kayıtlı düzeltme yok."
+                return "\n".join(f"  [{s}] {w} → {c}" for w, c, s in pairs[:30])
+            except Exception as e:
+                return f"Hata: {e}"
+
+        def _tool_kutuphane_ara(inp: dict) -> str:
+            try:
+                from metin_atolyesi.core.manuscript_library import get_library
+                results = get_library().search_in_transcriptions(inp["sorgu"])
+                if not results:
+                    return "Eşleşme bulunamadı."
+                out = []
+                for r in results[:5]:
+                    out.append(f"  Eser: {r.get('eser_adi','?')} | {r.get('kesit','')[:80]}")
+                return "\n".join(out)
+            except Exception as e:
+                return f"Hata: {e}"
+
+        def _tool_kutuphane_listele(inp: dict) -> str:
+            try:
+                from metin_atolyesi.core.manuscript_library import get_library
+                entries = get_library().list_entries()
+                if not entries:
+                    return "Kütüphane boş."
+                return "\n".join(
+                    f"  {i+1}. {e.get('eser_adi','?')} "
+                    f"[{e.get('yazi_turu','')}] {e.get('donem','')}"
+                    for i, e in enumerate(entries[:20])
+                )
+            except Exception as e:
+                return f"Hata: {e}"
+
+        def _tool_el_yazmasi_ayarla(inp: dict) -> str:
+            try:
+                if hasattr(self, "ocr_panel"):
+                    meta = dict(self.ocr_panel._ms_meta or {})
+                    for k in ("eser_adi","yazi_turu","hareke","donem","alan"):
+                        if inp.get(k):
+                            meta[k] = inp[k]
+                    if inp.get("mod") == "el_yazmasi":
+                        self.after(0, lambda: self.ocr_panel._doc_mode_var.set("manuscript"))
+                    self.after(0, lambda m=meta: self.ocr_panel.set_manuscript_meta(m))
+                    return "El yazması ayarları güncellendi: " + ", ".join(
+                        f"{k}={v}" for k, v in inp.items()
+                    )
+                return "OCR paneli hazır değil."
+            except Exception as e:
+                return f"Hata: {e}"
+
+        def _tool_ocr_ayarla(inp: dict) -> str:
+            try:
+                ocr = self.ocr_panel
+                if inp.get("motor"):  self.after(0, lambda v=inp["motor"]: ocr._engine_var.set(v))
+                if inp.get("dil"):    self.after(0, lambda v=inp["dil"]: ocr._lang_code_var.set(v))
+                if inp.get("on_islem"): self.after(0, lambda v=inp["on_islem"]: ocr._preprocess_var.set(v))
+                if "guven"  in inp: self.after(0, lambda v=inp["guven"]:  ocr._confidence_var.set(v))
+                if "deskew" in inp: self.after(0, lambda v=inp["deskew"]: ocr._deskew_var.set(v))
+                return "OCR ayarları güncellendi."
+            except Exception as e:
+                return f"Hata: {e}"
+
+        def _tool_sayfa_git(inp: dict) -> str:
+            try:
+                sayfa = max(1, inp["sayfa"])
+                idx   = sayfa - 1
+                if 0 <= idx < len(self.project.pages):
+                    self.project.current_page = idx
+                    self.after(0, lambda: self.ocr_panel._load_page()
+                               if hasattr(self, "ocr_panel") else None)
+                    return f"Sayfa {sayfa}'e gidildi."
+                return f"Geçersiz sayfa numarası: {sayfa}"
+            except Exception as e:
+                return f"Hata: {e}"
+
+        def _tool_pdf_ac(inp: dict) -> str:
+            try:
+                yol = inp.get("yol", "")
+                if yol:
+                    self.after(0, lambda: self.load_pdf(yol))
+                    return f"PDF açılıyor: {yol}"
+                else:
+                    self.after(0, self.open_file_dialog)
+                    return "Dosya seçici açıldı."
+            except Exception as e:
+                return f"Hata: {e}"
+
+        def _tool_proje_kaydet(inp: dict) -> str:
+            try:
+                self.after(0, self.save_project)
+                return "Proje kaydedildi."
+            except Exception as e:
+                return f"Hata: {e}"
+
+        def _tool_disa_aktar(inp: dict) -> str:
+            try:
+                fmt = inp["format"]
+                cmds = {"word": self.export_word, "txt": self.export_txt, "pdf": self.export_searchable_pdf}
+                if fmt in cmds:
+                    self.after(0, cmds[fmt])
+                    return f"{fmt.upper()} dışa aktarma başlatıldı."
+                return f"Bilinmeyen format: {fmt}"
+            except Exception as e:
+                return f"Hata: {e}"
+
+        def _tool_proje_durumu(inp: dict) -> str:
+            try:
+                pages  = self.project.pages
+                toplam = len(pages)
+                ocr_li = sum(1 for p in pages if p.text and p.text.strip())
+                bos    = toplam - ocr_li
+                meta   = getattr(self, "ocr_panel", None)
+                motor  = meta._engine_var.get() if meta else "?"
+                dil    = meta._lang_code_var.get() if meta else "?"
+                return (
+                    f"Toplam sayfa: {toplam}\n"
+                    f"OCR tamamlanan: {ocr_li}\n"
+                    f"Boş sayfa: {bos}\n"
+                    f"Motor: {motor}  Dil: {dil}\n"
+                    f"Aktif sayfa: {self.project.current_page + 1}"
+                )
+            except Exception as e:
+                return f"Hata: {e}"
+
+        def _tool_metin_analiz(inp: dict) -> str:
+            try:
+                metin = inp.get("metin") or (
+                    self.project.pages[self.project.current_page].text or ""
+                )
+                from metin_atolyesi.core.text_tools import find_suspicious_words
+                suspicious = find_suspicious_words(metin)
+                kelime_sayisi = len(metin.split())
+                return (
+                    f"Kelime sayısı: {kelime_sayisi}\n"
+                    f"Şüpheli okuma sayısı: {len(suspicious)}\n"
+                    f"Şüpheli kelimeler: {', '.join(s['word'] for s in suspicious[:10])}"
+                )
+            except Exception as e:
+                return f"Hata: {e}"
+
+        handlers = {
+            "ocr_calistir":        _tool_ocr_calistir,
+            "metin_al":            _tool_metin_al,
+            "metin_guncelle":      _tool_metin_guncelle,
+            "bul_degistir":        _tool_bul_degistir,
+            "duzeltme_ekle":       _tool_duzeltme_ekle,
+            "duzeltmeleri_listele":_tool_duzeltmeleri_listele,
+            "kutuphane_ara":       _tool_kutuphane_ara,
+            "kutuphane_listele":   _tool_kutuphane_listele,
+            "el_yazmasi_ayarla":   _tool_el_yazmasi_ayarla,
+            "ocr_ayarla":          _tool_ocr_ayarla,
+            "sayfa_git":           _tool_sayfa_git,
+            "pdf_ac":              _tool_pdf_ac,
+            "proje_kaydet":        _tool_proje_kaydet,
+            "disa_aktar":          _tool_disa_aktar,
+            "proje_durumu":        _tool_proje_durumu,
+            "metin_analiz":        _tool_metin_analiz,
+        }
+
+        self._ai_panel = AIPanel(
+            self._ai_frame,
+            get_context_cb=_get_context,
+            tool_handlers=handlers,
+        )
+        self._ai_panel.pack(fill=tk.BOTH, expand=True)
+
     def _open_wizard_learn_mode(self) -> None:
         """Ana sekme: tam öğrenme modu — transkripsiyon kaynağı zorunlu."""
         if self._wizard_panel is not None:
@@ -237,7 +529,9 @@ class MainWindow(BaseTk):
         self._ocr_frame     = ttk.Frame(root)
         self._pdf_frame     = ttk.Frame(root)
         self._yazma_frame   = tk.Frame(root, bg="#f4f5f9")  # El Yazması Öğret modu
+        self._ai_frame      = tk.Frame(root, bg="#eceef8")   # Yapay Zeka Paneli
         self._wizard_panel  = None  # ManuscriptWizard — ilk açılışta oluşturulur
+        self._ai_panel      = None  # AIPanel — ilk açılışta oluşturulur
 
         self._build_classic_layout(self._classic_frame)
         self._build_ocr_frame_content(self._ocr_frame)
@@ -333,6 +627,8 @@ class MainWindow(BaseTk):
         self._pdf_frame.pack_forget()
         if hasattr(self, "_yazma_frame"):
             self._yazma_frame.pack_forget()
+        if hasattr(self, "_ai_frame"):
+            self._ai_frame.pack_forget()
 
         self._current_mode = mode
 
@@ -362,11 +658,17 @@ class MainWindow(BaseTk):
                         self.ocr_panel.set_manuscript_meta(meta)
                 self._wizard_panel.on_learning_done = _sync_meta
 
+        elif mode == "ai":
+            self._ai_frame.pack(fill=tk.BOTH, expand=True)
+            if self._ai_panel is None:
+                self._build_ai_panel()
+
         # Araç çubuğu düğmelerini vurgula
         nav_btns = {
             "ocr":   (getattr(self, "_ocr_nav_btn",   None), "ocr"),
             "pdf":   (getattr(self, "_pdf_nav_btn",   None), "pdf"),
             "yazma": (getattr(self, "_yazma_nav_btn", None), "yazma"),
+            "ai":    (getattr(self, "_ai_nav_btn",    None), "ai"),
         }
         for m, (btn, m_key) in nav_btns.items():
             if btn:
