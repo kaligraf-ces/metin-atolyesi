@@ -2661,103 +2661,167 @@ class MainWindow(BaseTk):
     # -----------------------------------------------------------------------
 
     def open_hf_settings(self) -> None:
-        """HuggingFace token ve kullanıcı adı giriş penceresi."""
+        """HuggingFace yapılandırma + veri senkronizasyon penceresi."""
+        import threading as _threading
         from metin_atolyesi.core.hf_store import save_hf_config, _load_hf_config
+        from metin_atolyesi.core import data_sync as _ds
 
         dlg = tk.Toplevel(self)
-        dlg.title("HuggingFace Ayarları")
-        dlg.geometry("520x440")
-        dlg.minsize(480, 400)
+        dlg.title("HuggingFace — Veri Senkronizasyonu")
+        dlg.geometry("560x580")
+        dlg.minsize(500, 520)
         dlg.transient(self)
         dlg.grab_set()
 
-        # Başlık
-        header = tk.Frame(dlg, bg="#ff9500")
+        # ── Başlık ──────────────────────────────────────────────────────
+        header = tk.Frame(dlg, bg="#ff7a00")
         header.pack(fill=tk.X)
-        tk.Label(header, text="  🤗  HuggingFace Veri Deposu",
-                 bg="#ff9500", fg="white",
+        tk.Label(header, text="  🤗  HuggingFace Veri Senkronizasyonu",
+                 bg="#ff7a00", fg="white",
                  font=("Segoe UI", 11, "bold"), pady=10).pack(anchor=tk.W)
 
         body = ttk.Frame(dlg, padding=16)
         body.pack(fill=tk.BOTH, expand=True)
-        body.columnconfigure(0, weight=1)
+        body.columnconfigure(1, weight=1)
 
-        # Açıklama
-        ttk.Label(body,
-                  text="Orijinal PDF'leri HuggingFace'te saklamak için\n"
-                       "kullanıcı adınızı ve token'ınızı girin.\n"
-                       "Token: huggingface.co/settings/tokens → Write yetkisi",
-                  wraplength=460, justify=tk.LEFT).grid(
-            row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 10))
-
-        ttk.Separator(body).grid(row=1, column=0, columnspan=2,
-                                 sticky=tk.EW, pady=(0, 10))
+        # ── Kimlik bilgileri ─────────────────────────────────────────────
+        ttk.Label(body, text="🔑 Kimlik Bilgileri",
+                  font=("Segoe UI", 10, "bold")).grid(
+            row=0, column=0, columnspan=2, sticky=tk.W, pady=(0, 6))
 
         cfg = _load_hf_config()
 
-        # Kullanıcı adı
-        ttk.Label(body, text="HuggingFace kullanıcı adı:").grid(
-            row=2, column=0, sticky=tk.W, pady=4)
+        ttk.Label(body, text="Kullanıcı adı:").grid(row=1, column=0, sticky=tk.W, pady=3)
         user_var = tk.StringVar(value=cfg.get("username", ""))
-        ttk.Entry(body, textvariable=user_var, width=30).grid(
-            row=3, column=0, sticky=tk.EW, pady=(0, 10))
+        ttk.Entry(body, textvariable=user_var, width=28).grid(
+            row=1, column=1, sticky=tk.EW, padx=(8, 0), pady=3)
 
-        # Token
-        ttk.Label(body, text="Access Token (hf_...):").grid(
-            row=4, column=0, sticky=tk.W, pady=4)
+        ttk.Label(body, text="Token (hf_...):").grid(row=2, column=0, sticky=tk.W, pady=3)
         token_var = tk.StringVar(value=cfg.get("token", ""))
-        token_entry = ttk.Entry(body, textvariable=token_var, width=44, show="•")
-        token_entry.grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4))
+        token_entry = ttk.Entry(body, textvariable=token_var, show="•", width=36)
+        token_entry.grid(row=2, column=1, sticky=tk.EW, padx=(8, 0), pady=3)
 
         show_var = tk.BooleanVar(value=False)
-        def toggle_show():
+        def _toggle_show():
             token_entry.configure(show="" if show_var.get() else "•")
         ttk.Checkbutton(body, text="Token'ı göster",
-                        variable=show_var, command=toggle_show).grid(
-            row=6, column=0, sticky=tk.W, pady=(0, 10))
+                        variable=show_var, command=_toggle_show).grid(
+            row=3, column=1, sticky=tk.W, padx=(8, 0), pady=(0, 4))
 
-        ttk.Separator(body).grid(row=7, column=0, columnspan=2,
-                                 sticky=tk.EW, pady=(0, 10))
+        ttk.Label(body,
+                  text="Token: huggingface.co/settings/tokens → Write yetkisi seçin",
+                  font=("Segoe UI", 8), foreground="#777").grid(
+            row=4, column=0, columnspan=2, sticky=tk.W, pady=(0, 6))
 
-        result_var = tk.StringVar(value="")
-        ttk.Label(body, textvariable=result_var,
-                  foreground="#0066aa", font=("Segoe UI", 9)).grid(
-            row=8, column=0, columnspan=2, sticky=tk.W, pady=(0, 8))
+        cred_row = ttk.Frame(body)
+        cred_row.grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=(0, 8))
 
-        btn_row = ttk.Frame(body)
-        btn_row.grid(row=9, column=0, columnspan=2, sticky=tk.EW)
+        status_var = tk.StringVar(value="")
+        status_lbl = ttk.Label(body, textvariable=status_var,
+                               font=("Segoe UI", 9), foreground="#0066aa",
+                               wraplength=500)
+        status_lbl.grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=2)
 
-        def do_test():
-            token = token_var.get().strip()
-            user  = user_var.get().strip()
-            if not token or not user:
-                result_var.set("⚠  Kullanıcı adı ve token gerekli.")
-                return
-            result_var.set("⏳  Test ediliyor…")
-            dlg.update()
-            try:
-                from huggingface_hub import HfApi
-                api  = HfApi(token=token)
-                info = api.whoami()
-                result_var.set(f"✅  Bağlantı başarılı! ({info.get('name', user)})")
-            except Exception as exc:
-                result_var.set(f"❌  {str(exc)[:100]}")
-
-        def do_save():
+        def _save_creds():
             save_hf_config(token_var.get().strip(), user_var.get().strip())
-            # HFStore singleton'ı sıfırla
             import metin_atolyesi.core.hf_store as _hf
             _hf._hf_instance = None
-            result_var.set("💾  Kaydedildi.")
-            dlg.after(900, dlg.destroy)
+            status_var.set("💾 Kaydedildi.")
 
-        ttk.Button(btn_row, text="🔗 Bağlantıyı Test Et",
-                   command=do_test).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(btn_row, text="💾 Kaydet",
-                   command=do_save).pack(side=tk.LEFT)
-        ttk.Button(btn_row, text="İptal",
-                   command=dlg.destroy).pack(side=tk.RIGHT)
+        def _test():
+            _save_creds()
+            status_var.set("⏳ Test ediliyor…"); dlg.update()
+            ok, msg = _ds.check_connection()
+            status_var.set(("✅ " if ok else "❌ ") + msg)
 
+        ttk.Button(cred_row, text="🔗 Test Et", command=_test).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(cred_row, text="💾 Kaydet", command=_save_creds).pack(side=tk.LEFT)
+
+        ttk.Separator(body).grid(row=7, column=0, columnspan=2, sticky=tk.EW, pady=10)
+
+        # ── Senkronizasyon ───────────────────────────────────────────────
+        ttk.Label(body, text="🔄 Veri Senkronizasyonu",
+                  font=("Segoe UI", 10, "bold")).grid(
+            row=8, column=0, columnspan=2, sticky=tk.W, pady=(0, 4))
+
+        ttk.Label(body,
+                  text=f"Repo: {_ds.repo_id() or '<kullanıcı_adı>/metin-atolyesi-data'}  (private)\n"
+                       "El yazması kütüphanesi + OCR düzeltmeleri senkronize edilir.",
+                  font=("Segoe UI", 9), foreground="#555").grid(
+            row=9, column=0, columnspan=2, sticky=tk.W, pady=(0, 6))
+
+        # İlerleme
+        prog_var = tk.StringVar(value="")
+        prog_lbl = ttk.Label(body, textvariable=prog_var,
+                             font=("Segoe UI", 9, "italic"), foreground="#2a7a2a")
+        prog_lbl.grid(row=10, column=0, columnspan=2, sticky=tk.W, pady=2)
+
+        prog_bar = ttk.Progressbar(body, mode="determinate", maximum=100)
+        prog_bar.grid(row=11, column=0, columnspan=2, sticky=tk.EW, pady=(0, 8))
+
+        def _progress(msg: str, done: int, total: int) -> None:
+            prog_var.set(msg)
+            if total > 0:
+                prog_bar["value"] = int(done / total * 100)
+            dlg.update_idletasks()
+
+        def _run_push():
+            _save_creds()
+            status_var.set("⏳ Yükleniyor…"); dlg.update()
+            btn_push.configure(state="disabled")
+            btn_pull.configure(state="disabled")
+            def _t():
+                try:
+                    r = _ds.push_all(progress_cb=_progress)
+                    msg = (f"✅ Yükleme tamamlandı — "
+                           f"{r['uploaded']} dosya yüklendi"
+                           f"{', ' + str(len(r['errors'])) + ' hata' if r['errors'] else ''}.")
+                    dlg.after(0, lambda: status_var.set(msg))
+                except Exception as exc:
+                    dlg.after(0, lambda: status_var.set(f"❌ {exc}"))
+                finally:
+                    dlg.after(0, lambda: btn_push.configure(state="normal"))
+                    dlg.after(0, lambda: btn_pull.configure(state="normal"))
+                    dlg.after(0, lambda: prog_bar.configure(value=100))
+            _threading.Thread(target=_t, daemon=True).start()
+
+        def _run_pull():
+            _save_creds()
+            status_var.set("⏳ İndiriliyor…"); dlg.update()
+            btn_push.configure(state="disabled")
+            btn_pull.configure(state="disabled")
+            def _t():
+                try:
+                    r = _ds.pull_all(progress_cb=_progress)
+                    msg = (f"✅ İndirme tamamlandı — "
+                           f"{r['downloaded']} dosya indirildi"
+                           f"{', ' + str(len(r['errors'])) + ' hata' if r['errors'] else ''}.")
+                    dlg.after(0, lambda: status_var.set(msg))
+                except Exception as exc:
+                    dlg.after(0, lambda: status_var.set(f"❌ {exc}"))
+                finally:
+                    dlg.after(0, lambda: btn_push.configure(state="normal"))
+                    dlg.after(0, lambda: btn_pull.configure(state="normal"))
+            _threading.Thread(target=_t, daemon=True).start()
+
+        sync_row = ttk.Frame(body)
+        sync_row.grid(row=12, column=0, columnspan=2, sticky=tk.EW, pady=4)
+
+        btn_push = ttk.Button(sync_row, text="⬆  Bu Bilgisayardan Yükle",
+                              command=_run_push, width=26)
+        btn_push.pack(side=tk.LEFT, padx=(0, 8))
+
+        btn_pull = ttk.Button(sync_row, text="⬇  Diğer Bilgisayardan İndir",
+                              command=_run_pull, width=28)
+        btn_pull.pack(side=tk.LEFT)
+
+        ttk.Separator(body).grid(row=13, column=0, columnspan=2, sticky=tk.EW, pady=10)
+
+        # ── Kapat ────────────────────────────────────────────────────────
+        ttk.Button(body, text="Kapat", command=dlg.destroy).grid(
+            row=14, column=1, sticky=tk.E)
+
+        body.rowconfigure(6, weight=1)
         self.wait_window(dlg)
 
     def simple_name_dialog(self, title: str, default: str) -> str | None:
