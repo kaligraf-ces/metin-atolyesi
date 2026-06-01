@@ -55,6 +55,17 @@ htmlcov/
 config_local.json
 secrets.json
 .pypirc
+*.metin_atolyesi_config.json
+
+# Build çıktıları
+build/
+dist/
+build_log.txt
+# run_app.py izleniyor (PyInstaller giriş noktası)
+
+# Geçici / kişisel notlar
+kod.txt
+kod2.txt
 
 # Type checker
 .mypy_cache/

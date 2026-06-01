@@ -90,7 +90,8 @@ def collect_status() -> list[DependencyStatus]:
         ("pytesseract", module_available("pytesseract"), "Tesseract OCR baglantisi"),
         ("Tesseract", find_tesseract() is not None, "Yerel OCR motoru"),
         ("Windows OCR", windows_ocr_available(), "Windows'un yerlesik OCR motoru"),
-        ("RapidOCR", module_available("rapidocr_onnxruntime"), "Tesseract yoksa yerel OCR alternatifi"),
+        ("RapidOCR", module_available("rapidocr_onnxruntime"), "Hafif yerel OCR alternatifi"),
+        ("EasyOCR", module_available("easyocr"), "Arapca/Osmanlica icin derin ogrenme OCR"),
         ("Ollama", command_available("ollama"), "Yerel yapay zeka komutlari"),
     ]
     return [DependencyStatus(*item) for item in checks]

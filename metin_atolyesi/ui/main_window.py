@@ -96,11 +96,11 @@ class MainWindow(BaseTk):
         style.configure("Status.TLabel", foreground="#666", font=("Segoe UI", 9))
 
     # ── Araç çubuğu renk sabitleri ────────────────────────────────────────
-    _TB_BG  = "#1e1e2e"   # araç çubuğu arkaplanı
-    _TB_BTN = "#2a2a40"   # normal düğme arkaplanı
+    _TB_BG  = "#252540"   # araç çubuğu arkaplanı
+    _TB_BTN = "#30315a"   # normal düğme arkaplanı
     _TB_ACT = "#0d6efd"   # aktif mod düğmesi (mavi)
     _TB_FG  = "#d8daf0"   # yazı rengi
-    _TB_SEP = "#3a3a58"   # ince ayırıcı rengi
+    _TB_SEP = "#4a4c6a"   # ince ayırıcı rengi
 
     def _build_toolbar(self) -> None:
         """Koyu navigasyon araç çubuğu: [≡ Dosya ▾] | [🔍 OCR] | [📄 PDF İşlemleri]"""
@@ -156,6 +156,29 @@ class MainWindow(BaseTk):
         )
         self._pdf_nav_btn.pack(side=tk.LEFT, padx=1)
 
+        tk.Frame(bar, bg=self._TB_SEP, width=1).pack(
+            side=tk.LEFT, fill=tk.Y, pady=5, padx=4)
+
+        # El Yazması Öğret modu düğmesi
+        self._yazma_nav_btn = tk.Button(
+            bar, text="  📜  El Yazması Öğret  ",
+            bg=self._TB_BTN, fg=self._TB_FG,
+            font=("Segoe UI", 10, "bold"),
+            relief=tk.FLAT, pady=10,
+            activebackground=self._TB_SEP, activeforeground=self._TB_FG,
+            bd=0, cursor="hand2",
+            command=lambda: self._open_wizard_learn_mode(),
+        )
+        self._yazma_nav_btn.pack(side=tk.LEFT, padx=1)
+
+    def _open_wizard_learn_mode(self) -> None:
+        """Ana sekme: tam öğrenme modu — transkripsiyon kaynağı zorunlu."""
+        if self._wizard_panel is not None:
+            self._wizard_panel._config_only = False
+        self._set_mode("yazma")
+        if self._wizard_panel is not None:
+            self._wizard_panel._config_only = False
+
     def _build_dosya_menu(self, mb: tk.Menubutton) -> None:
         """Dosya hamburger açılır menüsünü oluşturur."""
         menu = tk.Menu(
@@ -188,12 +211,11 @@ class MainWindow(BaseTk):
         menu.add_command(label="  📄  Metin Aktar",              command=self.export_txt)
         menu.add_command(label="  🔍  Aranabilir PDF Oluştur",   command=self.export_searchable_pdf)
         menu.add_separator()
-        menu.add_separator()
-        menu.add_command(label="  ✍  El Yazması Öğret",         command=self.open_manuscript_wizard)
         menu.add_command(label="  📚  Yazma Kütüphanesi",        command=self.open_manuscript_library)
         menu.add_separator()
         menu.add_command(label="  ⚙  Bağımlılıkları Denetle",   command=self.show_dependencies)
         menu.add_command(label="  ⚡  Claude API Ayarları",      command=self.open_claude_settings)
+        menu.add_command(label="  📜  Transkribus Ayarları",     command=self.open_transkribus_settings)
         menu.add_command(label="  🤗  HuggingFace Ayarları",     command=self.open_hf_settings)
         menu.add_separator()
         menu.add_command(label="  ✖  Çıkış",                    command=self.on_close)
@@ -210,10 +232,12 @@ class MainWindow(BaseTk):
         self.status_var = tk.StringVar(value="Hazır")
         ttk.Label(bottom, textvariable=self.status_var, style="Status.TLabel").pack(side=tk.LEFT)
 
-        # ── İki mod çerçevesi (aynı alanda; biri görünür) ────────────────
+        # ── Mod çerçeveleri (aynı alanda; biri görünür) ──────────────────
         self._classic_frame = ttk.Frame(root)   # klasik mod (dahili, menüde yok)
         self._ocr_frame     = ttk.Frame(root)
         self._pdf_frame     = ttk.Frame(root)
+        self._yazma_frame   = tk.Frame(root, bg="#f4f5f9")  # El Yazması Öğret modu
+        self._wizard_panel  = None  # ManuscriptWizard — ilk açılışta oluşturulur
 
         self._build_classic_layout(self._classic_frame)
         self._build_ocr_frame_content(self._ocr_frame)
@@ -251,6 +275,15 @@ class MainWindow(BaseTk):
             on_text_saved=self._on_ocr_text_saved,
         )
         self.ocr_panel.pack(fill=tk.BOTH, expand=True)
+        # El yazması sihirbazı — OCR panelinden açılınca config_only modu
+        def _ocr_open_wizard():
+            """OCR panelinden wizard: transkripsiyon zorunlu değil."""
+            if self._wizard_panel is not None:
+                self._wizard_panel._config_only = True
+            self._set_mode("yazma")
+            if self._wizard_panel is not None:
+                self._wizard_panel._config_only = True
+        self.ocr_panel._on_open_wizard_cb = _ocr_open_wizard
 
     def _build_pdf_frame_content(self, parent: ttk.Frame) -> None:
         """PDF İşlemleri modu — sol önizleme + sağ araçlar."""
@@ -293,11 +326,13 @@ class MainWindow(BaseTk):
         self._build_pdf_tab(tools_frame)
 
     def _set_mode(self, mode: str) -> None:
-        """OCR / PDF modları arasında geçiş yapar; araç çubuğunu günceller."""
+        """OCR / PDF / El Yazması modları arasında geçiş; araç çubuğunu günceller."""
         # Tüm mod çerçevelerini gizle
         self._classic_frame.pack_forget()
         self._ocr_frame.pack_forget()
         self._pdf_frame.pack_forget()
+        if hasattr(self, "_yazma_frame"):
+            self._yazma_frame.pack_forget()
 
         self._current_mode = mode
 
@@ -311,17 +346,35 @@ class MainWindow(BaseTk):
         elif mode == "pdf":
             self._pdf_frame.pack(fill=tk.BOTH, expand=True)
             self.after(80, self._refresh_pdf_frame_preview)
+        elif mode == "yazma":
+            self._yazma_frame.pack(fill=tk.BOTH, expand=True)
+            # İlk açılışta wizard'ı oluştur
+            if self._wizard_panel is None:
+                from metin_atolyesi.ui.manuscript_wizard import ManuscriptWizard
+                self._wizard_panel = ManuscriptWizard(
+                    self._yazma_frame,
+                    on_close=lambda: self._set_mode("ocr"),
+                )
+                self._wizard_panel.pack(fill=tk.BOTH, expand=True)
+                # Öğrenme bitince OCR paneline meta veri aktar
+                def _sync_meta(meta: dict) -> None:
+                    if hasattr(self, "ocr_panel"):
+                        self.ocr_panel.set_manuscript_meta(meta)
+                self._wizard_panel.on_learning_done = _sync_meta
 
         # Araç çubuğu düğmelerini vurgula
-        if hasattr(self, "_ocr_nav_btn") and self._ocr_nav_btn:
-            self._ocr_nav_btn.configure(
-                bg=self._TB_ACT if mode == "ocr" else self._TB_BTN,
-                fg="white"      if mode == "ocr" else self._TB_FG,
-            )
-            self._pdf_nav_btn.configure(
-                bg=self._TB_ACT if mode == "pdf" else self._TB_BTN,
-                fg="white"      if mode == "pdf" else self._TB_FG,
-            )
+        nav_btns = {
+            "ocr":   (getattr(self, "_ocr_nav_btn",   None), "ocr"),
+            "pdf":   (getattr(self, "_pdf_nav_btn",   None), "pdf"),
+            "yazma": (getattr(self, "_yazma_nav_btn", None), "yazma"),
+        }
+        for m, (btn, m_key) in nav_btns.items():
+            if btn:
+                active = (mode == m_key)
+                btn.configure(
+                    bg=self._TB_ACT if active else self._TB_BTN,
+                    fg="white"      if active else self._TB_FG,
+                )
 
     def _build_left(self, parent: ttk.Frame) -> None:
         header = ttk.Frame(parent)
@@ -2399,6 +2452,79 @@ class MainWindow(BaseTk):
         messagebox.showinfo("Bilesenler", "\n".join(lines) + "\n\nEksikler:\n" + missing_dependency_text())
 
     # -----------------------------------------------------------------------
+    # Transkribus ayarları
+    # -----------------------------------------------------------------------
+
+    def open_transkribus_settings(self) -> None:
+        """Transkribus HTR yapılandırma penceresini aç."""
+        # OCR panelindeki aynı diyaloğu kullan
+        if hasattr(self, "_ocr_panel") and self._ocr_panel is not None:
+            self._ocr_panel._open_transkribus_settings()
+        else:
+            # OCR paneli henüz açık değilse doğrudan aç
+            from metin_atolyesi.core.transkribus_ocr import (
+                get_config, save_config, get_credit_info,
+                OTTOMAN_MODELS, DEFAULT_MODEL_ID,
+            )
+            import webbrowser
+            cfg = get_config()
+            dlg = tk.Toplevel(self)
+            dlg.title("Transkribus Ayarları")
+            dlg.geometry("520x380")
+            dlg.resizable(False, False)
+            dlg.transient(self)
+            dlg.grab_set()
+
+            ttk.Label(dlg, text="📜 Transkribus HTR Yapılandırması",
+                      font=("Segoe UI", 12, "bold")).pack(anchor=tk.W, padx=16, pady=(14, 2))
+            ttk.Label(dlg,
+                      text="Osmanlıca el yazmaları için UNESCO & devlet arşivleri standardı.",
+                      font=("Segoe UI", 9), foreground="#555").pack(anchor=tk.W, padx=16)
+            ttk.Separator(dlg).pack(fill=tk.X, padx=16, pady=8)
+
+            form = ttk.Frame(dlg)
+            form.pack(fill=tk.X, padx=16)
+            ttk.Label(form, text="E-posta:", width=14).grid(row=0, column=0, sticky=tk.W, pady=6)
+            email_v = tk.StringVar(value=cfg["email"])
+            ttk.Entry(form, textvariable=email_v, width=36).grid(row=0, column=1, sticky=tk.EW, pady=6)
+            ttk.Label(form, text="Şifre:", width=14).grid(row=1, column=0, sticky=tk.W, pady=6)
+            pw_v = tk.StringVar(value=cfg["password"])
+            ttk.Entry(form, textvariable=pw_v, show="•", width=36).grid(row=1, column=1, sticky=tk.EW, pady=6)
+            ttk.Label(form, text="Model ID:", width=14).grid(row=2, column=0, sticky=tk.W, pady=6)
+            mid_v = tk.IntVar(value=cfg["model_id"])
+            ttk.Entry(form, textvariable=mid_v, width=10).grid(row=2, column=1, sticky=tk.W, pady=6)
+            form.columnconfigure(1, weight=1)
+
+            info_v = tk.StringVar()
+            ttk.Label(dlg, textvariable=info_v, font=("Segoe UI", 9, "italic"),
+                      foreground="#2a7a2a").pack(padx=16, anchor=tk.W, pady=4)
+
+            def _test():
+                try:
+                    save_config(email_v.get(), pw_v.get(), mid_v.get())
+                    import metin_atolyesi.core.transkribus_ocr as _t
+                    _t._session_id = ""
+                    info_v.set("✓ " + get_credit_info())
+                except Exception as e:
+                    info_v.set(f"✗ {e}")
+
+            link_f = ttk.Frame(dlg)
+            link_f.pack(fill=tk.X, padx=16)
+            ttk.Label(link_f, text="Hesap:", font=("Segoe UI", 9)).pack(side=tk.LEFT)
+            lnk = ttk.Label(link_f, text="https://app.transkribus.ai",
+                            font=("Segoe UI", 9, "underline"), foreground="#0d6efd", cursor="hand2")
+            lnk.pack(side=tk.LEFT, padx=4)
+            lnk.bind("<Button-1>", lambda _: webbrowser.open("https://app.transkribus.ai"))
+
+            btn_r = ttk.Frame(dlg)
+            btn_r.pack(fill=tk.X, padx=16, pady=12)
+            ttk.Button(btn_r, text="🔌 Test Et", command=_test).pack(side=tk.LEFT, padx=(0, 6))
+            ttk.Button(btn_r, text="✓ Kaydet",
+                       command=lambda: (save_config(email_v.get(), pw_v.get(), mid_v.get()), dlg.destroy())
+                       ).pack(side=tk.LEFT)
+            ttk.Button(btn_r, text="İptal", command=dlg.destroy).pack(side=tk.RIGHT)
+
+    # -----------------------------------------------------------------------
     # Claude API ayarları
     # -----------------------------------------------------------------------
 
@@ -2523,8 +2649,8 @@ class MainWindow(BaseTk):
     # -----------------------------------------------------------------------
 
     def open_manuscript_wizard(self) -> None:
-        from metin_atolyesi.ui.manuscript_wizard import open_wizard
-        open_wizard(self)
+        """El Yazması Öğret moduna geçer (toolbar düğmesiyle aynı)."""
+        self._set_mode("yazma")
 
     def open_manuscript_library(self) -> None:
         from metin_atolyesi.ui.manuscript_wizard import open_library_viewer

@@ -74,10 +74,14 @@ TOOLTIPS: dict[str, str] = {
     ),
     "motor": (
         "OCR motoru:\n"
-        "• Otomatik: Mevcut en iyisini bulur\n"
-        "• Tesseract: Çok dilli, kelime güven skoru verir\n"
-        "• Windows OCR: Windows yerleşik, hızlı\n"
-        "• RapidOCR: Pip ile kurulan hafif alternatif"
+        "• Otomatik: Çalışan en iyi motoru sırayla dener\n"
+        "• Tesseract: Çok dilli, güven skoru verir\n"
+        "• Windows OCR: Windows yerleşik, kurulum gerekmez\n"
+        "• RapidOCR: Hafif alternatif (pip install rapidocr-onnxruntime)\n"
+        "• EasyOCR: Arapça desteği (pip install easyocr)\n"
+        "• Transkribus 📜: HTR derin öğrenme, Osmanlıca için en iyi açık kaynak\n"
+        "  UNESCO & devlet arşivleri standardı — hesap gerekli\n"
+        "• Claude ⚡: AI destekli, el yazması için en yüksek kalite"
     ),
     "mod": (
         "Görüntü ön işleme:\n"
@@ -199,6 +203,13 @@ class OcrPanel(ttk.Frame):
         self._filmstrip_total_h: int = 0
         self._fs_debounce_id: str | None = None    # scroll sonrası sayfa tespiti
 
+        # El Yazması meta (wizard'dan veya kütüphaneden aktarılır)
+        self._ms_meta: dict = {}
+        self._ms_bar_visible = tk.BooleanVar(value=False)
+        self._on_open_wizard_cb: Callable | None = None  # main_window'dan atanır
+        self._doc_mode_var = tk.StringVar(value="normal")
+        self._ms_summary_var = tk.StringVar(value="")
+
         self._build()
         self._setup_text_tags()
 
@@ -207,10 +218,15 @@ class OcrPanel(ttk.Frame):
     # -----------------------------------------------------------------------
 
     def _build(self) -> None:
-        # Üst ayarlar paneli (kompakt — 2 satır)
+        # Üst ayarlar paneli (kompakt — 2+1 satır)
         self._settings_frame = ttk.Frame(self, padding=(6, 4, 6, 2))
         self._settings_frame.pack(fill=tk.X)
         self._build_settings()
+
+        # El Yazması meta çubuğu — genişletilebilir
+        self._ms_bar_frame = ttk.Frame(self, padding=(6, 0, 6, 2))
+        self._ms_bar_frame.pack(fill=tk.X)
+        self._build_ms_meta_bar()
 
         ttk.Separator(self, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=6)
 
@@ -265,8 +281,9 @@ class OcrPanel(ttk.Frame):
         self._engine_var = tk.StringVar(value="otomatik")
         engine_cb = ttk.Combobox(
             r1, textvariable=self._engine_var,
-            values=["otomatik", "tesseract", "windows", "rapidocr", "claude ⚡"],
-            state="readonly", width=13,
+            values=["otomatik", "tesseract", "windows", "rapidocr", "easyocr",
+                    "transkribus 📜", "claude ⚡"],
+            state="readonly", width=15,
         )
         engine_cb.pack(side=tk.LEFT, padx=(2, 6))
         engine_cb.bind("<<ComboboxSelected>>", self._on_engine_select)
@@ -349,6 +366,283 @@ class OcrPanel(ttk.Frame):
         tip(ttk.Label(r2, text=" ❓"), "alan")
 
     # -----------------------------------------------------------------------
+    # El Yazması meta çubuğu
+    # -----------------------------------------------------------------------
+
+    def _build_ms_meta_bar(self) -> None:
+        """OCR öncesi belge türü ve el yazması yapılandırma çubuğu."""
+        bf = self._ms_bar_frame
+
+        # ── Satır: Belge türü radyoları | ayırıcı | toggle | özet ─────────
+        header_row = ttk.Frame(bf)
+        header_row.pack(fill=tk.X, pady=(2, 0))
+
+        ttk.Label(header_row, text="Belge türü:").pack(side=tk.LEFT)
+        ttk.Radiobutton(
+            header_row, text="Normal PDF  (makale / kitap / tez)",
+            variable=self._doc_mode_var, value="normal",
+            command=self._on_doc_mode_change,
+        ).pack(side=tk.LEFT, padx=(4, 12))
+        ttk.Radiobutton(
+            header_row, text="El Yazması",
+            variable=self._doc_mode_var, value="manuscript",
+            command=self._on_doc_mode_change,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+
+        ttk.Separator(header_row, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
+
+        self._ms_toggle_btn = ttk.Button(
+            header_row, text="⚙ El Yazması Ayarları  ▼",
+            command=self._toggle_ms_bar, width=26, state=tk.DISABLED,
+        )
+        self._ms_toggle_btn.pack(side=tk.LEFT)
+
+        # Aktif kriter özeti
+        self._ms_summary_lbl = ttk.Label(
+            header_row, textvariable=self._ms_summary_var,
+            foreground="#2a7a2a", font=("Segoe UI", 9, "italic"))
+        self._ms_summary_lbl.pack(side=tk.LEFT, padx=(12, 0))
+
+        # ── Genişletilebilir içerik (başlangıçta gizli, sağa dayalı) ─────
+        self._ms_detail_frame = ttk.Frame(bf)
+        self._build_ms_detail(self._ms_detail_frame)
+
+    def _build_ms_detail(self, parent: ttk.Frame) -> None:
+        """Genişletilmiş el yazması ayarları satırı."""
+        # Satır 1: Eser adı + Ana alanlar
+        r1 = ttk.Frame(parent)
+        r1.pack(fill=tk.X, pady=(4, 2))
+
+        ttk.Label(r1, text="Eser Adı:").pack(side=tk.LEFT)
+        self._ms_eser_var = tk.StringVar()
+        ttk.Entry(r1, textvariable=self._ms_eser_var, width=24).pack(
+            side=tk.LEFT, padx=(2, 8))
+
+        ttk.Label(r1, text="Alan:").pack(side=tk.LEFT)
+        self._ms_alan_var = tk.StringVar(value="Osmanlıca")
+        try:
+            from metin_atolyesi.core.manuscript_library import ALANLAR
+            alan_vals = ALANLAR
+        except Exception:
+            alan_vals = ["Osmanlıca", "Arapça", "Farsça", "Türkçe"]
+        ttk.Combobox(r1, textvariable=self._ms_alan_var,
+                     values=alan_vals, state="readonly", width=14).pack(
+            side=tk.LEFT, padx=(2, 8))
+
+        ttk.Label(r1, text="Dönem:").pack(side=tk.LEFT)
+        self._ms_donem_var = tk.StringVar(value="Belirsiz")
+        try:
+            from metin_atolyesi.core.manuscript_library import DONEMLER
+            donem_vals = DONEMLER
+        except Exception:
+            donem_vals = ["Belirsiz", "13. yy", "14. yy", "15. yy", "16. yy",
+                          "17. yy", "18. yy", "19. yy"]
+        ttk.Combobox(r1, textvariable=self._ms_donem_var,
+                     values=donem_vals, state="readonly", width=12).pack(
+            side=tk.LEFT, padx=(2, 8))
+
+        # Satır 2: Yazı türü + Hareke + Aksiyonlar
+        r2 = ttk.Frame(parent)
+        r2.pack(fill=tk.X, pady=(0, 4))
+
+        ttk.Label(r2, text="Yazı Türü:").pack(side=tk.LEFT)
+        self._ms_yazi_var = tk.StringVar(value="Nesih")
+        try:
+            from metin_atolyesi.core.manuscript_library import YAZI_TURLERI
+            yazi_vals = YAZI_TURLERI
+        except Exception:
+            yazi_vals = ["Nesih", "Talik", "Sülüs", "Rika", "Divani", "Küfi"]
+        ttk.Combobox(r2, textvariable=self._ms_yazi_var,
+                     values=yazi_vals, state="readonly", width=12).pack(
+            side=tk.LEFT, padx=(2, 8))
+
+        ttk.Label(r2, text="Hareke:").pack(side=tk.LEFT)
+        self._ms_hareke_var = tk.StringVar(value="Harekesiz")
+        try:
+            from metin_atolyesi.core.manuscript_library import HAREKE_DURUMLARI
+            hareke_vals = HAREKE_DURUMLARI
+        except Exception:
+            hareke_vals = ["Harekesiz", "Tam harekeli", "Kısmen harekeli"]
+        ttk.Combobox(r2, textvariable=self._ms_hareke_var,
+                     values=hareke_vals, state="readonly", width=16).pack(
+            side=tk.LEFT, padx=(2, 12))
+
+        ttk.Separator(r2, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+
+        # Kütüphaneden yükle
+        ttk.Button(r2, text="📚 Kütüphaneden Yükle",
+                   command=self._load_ms_from_library).pack(side=tk.LEFT, padx=2)
+
+        # Tam sihirbaz
+        ttk.Button(r2, text="📜 Tam Yapılandır…",
+                   command=self._open_ms_wizard).pack(side=tk.LEFT, padx=2)
+
+        # Ayarları uygula butonu
+        ttk.Button(r2, text="✓ Uygula",
+                   command=self._apply_ms_meta).pack(side=tk.LEFT, padx=2)
+
+    def _on_doc_mode_change(self) -> None:
+        """Normal PDF / El Yazması modu seçimi değişince."""
+        is_ms = (self._doc_mode_var.get() == "manuscript")
+        self._ms_toggle_btn.configure(state=tk.NORMAL if is_ms else tk.DISABLED)
+        if not is_ms:
+            # Normal PDF → detail paneli kapat ve ms_meta'yı temizle
+            if self._ms_bar_visible.get():
+                self._ms_detail_frame.pack_forget()
+                self._ms_bar_visible.set(False)
+                self._ms_toggle_btn.configure(text="⚙ El Yazması Ayarları  ▼")
+            self._ms_meta = {}
+            self._ms_summary_var.set("")
+        else:
+            # El Yazması → mevcut meta varsa özeti güncelle
+            self._update_ms_summary()
+
+    def _toggle_ms_bar(self) -> None:
+        """El yazması ayarları detayını aç/kapat (sağa dayalı — row 3)."""
+        if self._ms_bar_visible.get():
+            self._ms_detail_frame.pack_forget()
+            self._ms_bar_visible.set(False)
+            self._ms_toggle_btn.configure(text="⚙ El Yazması Ayarları  ▼")
+        else:
+            self._ms_detail_frame.pack(side=tk.RIGHT, anchor=tk.NE)
+            self._ms_bar_visible.set(True)
+            self._ms_toggle_btn.configure(text="⚙ El Yazması Ayarları  ▲")
+
+    def _apply_ms_meta(self) -> None:
+        """Arayüzdeki değerleri _ms_meta sözlüğüne işle ve Claude OCR'e hazırla."""
+        self._ms_meta.update({
+            "eser_adi":  self._ms_eser_var.get().strip(),
+            "alan":      self._ms_alan_var.get(),
+            "donem":     self._ms_donem_var.get(),
+            "yazi_turu": self._ms_yazi_var.get(),
+            "hareke":    self._ms_hareke_var.get(),
+        })
+        # El Yazması moduna otomatik geç
+        if hasattr(self, "_doc_mode_var"):
+            self._doc_mode_var.set("manuscript")
+            self._ms_toggle_btn.configure(state=tk.NORMAL)
+        self._update_ms_summary()
+
+    def _update_ms_summary(self) -> None:
+        """Aktif kriterleri özetler; Claude OCR bu bilgileri kullanacak."""
+        m = self._ms_meta
+        if not m or self._doc_mode_var.get() != "manuscript":
+            self._ms_summary_var.set("")
+            return
+
+        parts: list[str] = []
+        if eser := m.get("eser_adi", ""):
+            parts.append(eser)
+        if yazi := m.get("yazi_turu", ""):
+            parts.append(yazi)
+        if hareke := m.get("hareke", ""):
+            parts.append(hareke)
+
+        # Ek kriterler sayısı
+        ekstra = 0
+        if m.get("imla_secimler"):
+            ekstra += len(m["imla_secimler"])
+        if m.get("trans_isaretleri"):
+            ekstra += len([t for t in m["trans_isaretleri"] if t.get("isaret")])
+        if m.get("aktarim_ilkeleri"):
+            ekstra += 1
+        if m.get("imla_serbest"):
+            ekstra += 1
+
+        ozet = "  |  ".join(parts) if parts else "Yapılandırıldı"
+        if ekstra:
+            ozet += f"  +{ekstra} ek kriter"
+        ozet += "  ✓ Claude OCR'e uygulanacak"
+        self._ms_summary_var.set(ozet)
+
+    def set_manuscript_meta(self, meta: dict) -> None:
+        """Wizard veya kütüphaneden gelen meta verisini uygular.
+
+        Tüm kriterler (imla, yapı, paleografi, transkripsiyon işaretleri…)
+        `_ms_meta`'da saklanır ve Claude OCR çağrısında prompt'a eklenir.
+        """
+        self._ms_meta = dict(meta)
+
+        # Belge modunu el yazmasına geçir
+        if hasattr(self, "_doc_mode_var"):
+            self._doc_mode_var.set("manuscript")
+            self._ms_toggle_btn.configure(state=tk.NORMAL)
+
+        # Kompakt UI alanlarını güncelle
+        if hasattr(self, "_ms_eser_var"):
+            self._ms_eser_var.set(meta.get("eser_adi", ""))
+            self._ms_alan_var.set(meta.get("alan", "Osmanlıca"))
+            self._ms_donem_var.set(meta.get("donem", "Belirsiz"))
+            self._ms_yazi_var.set(meta.get("yazi_turu", "Nesih"))
+            self._ms_hareke_var.set(meta.get("hareke", "Harekesiz"))
+
+        self._update_ms_summary()
+
+    def _load_ms_from_library(self) -> None:
+        """El yazması kütüphanesinden mevcut bir eseri yükler."""
+        try:
+            from metin_atolyesi.core.manuscript_library import get_library
+        except ImportError:
+            from tkinter import messagebox
+            messagebox.showwarning("Hata", "Kütüphane modülü yüklenemedi.",
+                                   parent=self.winfo_toplevel())
+            return
+
+        lib = get_library()
+        entries = lib.list_entries()
+        if not entries:
+            from tkinter import messagebox
+            messagebox.showinfo("Kütüphane Boş",
+                                "Henüz öğrenilmiş el yazması yok.\n"
+                                "'📜 El Yazması Öğret' butonuyla bir eser ekleyin.",
+                                parent=self.winfo_toplevel())
+            return
+
+        # Seçim penceresi
+        dlg = tk.Toplevel(self.winfo_toplevel())
+        dlg.title("El Yazması Seç")
+        dlg.geometry("520x340")
+        dlg.transient(self.winfo_toplevel())
+        dlg.grab_set()
+
+        ttk.Label(dlg, text="Kütüphanedeki eserlerden birini seçin:",
+                  style="Header.TLabel").pack(anchor=tk.W, padx=12, pady=(10, 4))
+
+        lb_frame = ttk.Frame(dlg)
+        lb_frame.pack(fill=tk.BOTH, expand=True, padx=12, pady=4)
+        sb = ttk.Scrollbar(lb_frame)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        lb = tk.Listbox(lb_frame, yscrollcommand=sb.set,
+                        font=("Segoe UI", 10), activestyle="none",
+                        selectmode=tk.SINGLE)
+        lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb.configure(command=lb.yview)
+
+        for e in entries:
+            lb.insert(tk.END, f"  {e.get('eser_adi', '—')}  "
+                              f"[{e.get('yazi_turu', '')}]  "
+                              f"{e.get('donem', '')}")
+
+        def _apply():
+            sel = lb.curselection()
+            if not sel:
+                return
+            entry = entries[sel[0]]
+            self.set_manuscript_meta(entry)
+            dlg.destroy()
+
+        btn_row = ttk.Frame(dlg)
+        btn_row.pack(fill=tk.X, padx=12, pady=(4, 10))
+        ttk.Button(btn_row, text="✓ Seç", command=_apply).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text="İptal", command=dlg.destroy).pack(side=tk.RIGHT)
+        lb.bind("<Double-Button-1>", lambda _: _apply())
+
+    def _open_ms_wizard(self) -> None:
+        """Tam sihirbaz moduna geçer (main_window üzerinden)."""
+        if self._on_open_wizard_cb:
+            self._on_open_wizard_cb()
+
+    # -----------------------------------------------------------------------
     # PDF bölmesi (sol)
     # -----------------------------------------------------------------------
 
@@ -385,14 +679,14 @@ class OcrPanel(ttk.Frame):
         canvas_frame.pack(fill=tk.BOTH, expand=True)
         self._canvas = tk.Canvas(canvas_frame, bg="#f0f0f0",
                                  highlightthickness=1, highlightbackground="#ccc")
-        vscroll = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL)
+        self._canvas_vscroll_widget = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL)
         hscroll = ttk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL)
         self._canvas.configure(yscrollcommand=self._on_canvas_yscroll,
                                xscrollcommand=hscroll.set)
-        vscroll.configure(command=self._canvas_yview_cmd)
+        self._canvas_vscroll_widget.configure(command=self._canvas_yview_cmd)
         hscroll.configure(command=self._canvas.xview)
         hscroll.pack(side=tk.BOTTOM, fill=tk.X)
-        vscroll.pack(side=tk.RIGHT,  fill=tk.Y)
+        self._canvas_vscroll_widget.pack(side=tk.RIGHT, fill=tk.Y)
         self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         self._canvas.bind("<ButtonPress-1>",   self._on_canvas_press)
@@ -1388,8 +1682,19 @@ class OcrPanel(ttk.Frame):
 
                 if engine == "claude":
                     # Claude kendi içinde en iyi sonucu üretiyor —
-                    # ön işleme veya çoklu deneme gerekmiyor
-                    text, suspicious = ocr_image(src, lang, engine="claude", psm=psm)
+                    # ön işleme veya çoklu deneme gerekmiyor.
+                    # El yazması modu aktifse meta kriterler prompt'a eklenir.
+                    _is_manuscript = (
+                        getattr(self, "_doc_mode_var", None) is not None
+                        and self._doc_mode_var.get() == "manuscript"
+                    )
+                    text, suspicious = ocr_image(
+                        src, lang, engine="claude", psm=psm,
+                        manuscript_meta=self._ms_meta if (_is_manuscript and self._ms_meta) else None,
+                    )
+                elif engine == "transkribus":
+                    # Transkribus kendi içinde HTR yapar — ön işlem gerektirmez
+                    text, suspicious = ocr_image(src, lang, engine="transkribus")
                 elif mode == "çoklu deneme":
                     text, suspicious = run_multi_mode_ocr(
                         src, work_dir, lang=lang, engine=engine,
@@ -1499,20 +1804,185 @@ class OcrPanel(ttk.Frame):
             lambda *_: self._lang_code_var.set(self._custom_lang_var.get()))
 
     def _on_engine_select(self, _event=None) -> None:
-        """Claude seçilince API anahtarı kontrolü yap."""
-        if "claude" in self._engine_var.get():
+        """Motor seçiminde gerekli bileşen kontrolü."""
+        eng = self._engine_var.get()
+
+        if "claude" in eng:
             self._engine_var.set("claude")   # " ⚡" eki olmadan sakla
             from metin_atolyesi.core.claude_ocr import get_api_key
             if not get_api_key():
-                from tkinter import messagebox
                 messagebox.showwarning(
                     "Claude API Anahtarı",
                     "Claude motoru seçildi ancak API anahtarı henüz girilmemiş.\n\n"
                     "Dosya → ⚡ Claude API Ayarları menüsünden anahtarınızı girin.",
                 )
 
+        elif eng == "easyocr":
+            import importlib.util
+            if importlib.util.find_spec("easyocr") is None:
+                messagebox.showinfo(
+                    "EasyOCR Kurulu Değil",
+                    "EasyOCR kurulmamış. Aşağıdaki komutu çalıştırın:\n\n"
+                    "    pip install easyocr\n\n"
+                    "Kurulum tamamlandıktan sonra uygulamayı yeniden başlatın.\n"
+                    "Not: İlk kullanımda model dosyaları indirilir (~500 MB).",
+                )
+
+        elif eng == "tesseract":
+            from metin_atolyesi.core.dependencies import find_tesseract, module_available
+            if not module_available("pytesseract"):
+                messagebox.showinfo(
+                    "pytesseract Kurulu Değil",
+                    "Tesseract motoru için pytesseract gerekli:\n\n"
+                    "    pip install pytesseract\n\n"
+                    "Ayrıca Tesseract programını da yükleyin:\n"
+                    "https://github.com/UB-Mannheim/tesseract/wiki",
+                )
+            elif not find_tesseract():
+                messagebox.showinfo(
+                    "Tesseract Bulunamadı",
+                    "pytesseract kurulu ama Tesseract programı bulunamadı.\n\n"
+                    "https://github.com/UB-Mannheim/tesseract/wiki\n"
+                    "adresinden indirip kurun (Türkçe dil paketini seçin).",
+                )
+
+        elif eng == "rapidocr":
+            import importlib.util
+            if importlib.util.find_spec("rapidocr_onnxruntime") is None:
+                messagebox.showinfo(
+                    "RapidOCR Kurulu Değil",
+                    "RapidOCR kurulmamış:\n\n"
+                    "    pip install rapidocr-onnxruntime",
+                )
+
+        elif "transkribus" in eng:
+            self._engine_var.set("transkribus")   # emoji eki olmadan sakla
+            from metin_atolyesi.core.transkribus_ocr import credentials_set
+            if not credentials_set():
+                answer = messagebox.askyesno(
+                    "Transkribus Ayarları",
+                    "Transkribus kimlik bilgileri henüz girilmemiş.\n\n"
+                    "Transkribus, Osmanlıca el yazmaları için dünya standardı HTR platformudur.\n"
+                    "Ücretsiz hesap: https://app.transkribus.ai\n\n"
+                    "Şimdi yapılandırmak ister misiniz?",
+                )
+                if answer:
+                    self._open_transkribus_settings()
+
     # -----------------------------------------------------------------------
     # Kapsam seçimi
+    def _open_transkribus_settings(self) -> None:
+        """Transkribus kimlik bilgileri ve model yapılandırma diyaloğu."""
+        from metin_atolyesi.core.transkribus_ocr import (
+            get_config, save_config, get_credit_info, OTTOMAN_MODELS, DEFAULT_MODEL_ID
+        )
+
+        dlg = tk.Toplevel(self.winfo_toplevel())
+        dlg.title("Transkribus Ayarları")
+        dlg.geometry("520x420")
+        dlg.resizable(False, False)
+        dlg.transient(self.winfo_toplevel())
+        dlg.grab_set()
+
+        cfg = get_config()
+
+        # ── Başlık ──────────────────────────────────────────────────────
+        hdr = ttk.Frame(dlg)
+        hdr.pack(fill=tk.X, padx=16, pady=(14, 6))
+        ttk.Label(hdr, text="📜 Transkribus HTR Yapılandırması",
+                  font=("Segoe UI", 12, "bold")).pack(anchor=tk.W)
+        ttk.Label(hdr,
+                  text="Osmanlıca el yazmaları için UNESCO & devlet arşivleri standardı.",
+                  font=("Segoe UI", 9), foreground="#555").pack(anchor=tk.W)
+
+        ttk.Separator(dlg, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=16, pady=6)
+
+        # ── Form alanları ───────────────────────────────────────────────
+        form = ttk.Frame(dlg)
+        form.pack(fill=tk.X, padx=16, pady=4)
+
+        ttk.Label(form, text="E-posta:", width=14, anchor=tk.W).grid(
+            row=0, column=0, sticky=tk.W, pady=6)
+        email_var = tk.StringVar(value=cfg["email"])
+        ttk.Entry(form, textvariable=email_var, width=36).grid(
+            row=0, column=1, sticky=tk.EW, pady=6)
+
+        ttk.Label(form, text="Şifre:", width=14, anchor=tk.W).grid(
+            row=1, column=0, sticky=tk.W, pady=6)
+        pw_var = tk.StringVar(value=cfg["password"])
+        ttk.Entry(form, textvariable=pw_var, show="•", width=36).grid(
+            row=1, column=1, sticky=tk.EW, pady=6)
+
+        ttk.Separator(form, orient=tk.HORIZONTAL).grid(
+            row=2, column=0, columnspan=2, sticky=tk.EW, pady=8)
+
+        ttk.Label(form, text="HTR Modeli:", width=14, anchor=tk.W).grid(
+            row=3, column=0, sticky=tk.W, pady=6)
+        model_names = list(OTTOMAN_MODELS.keys()) + ["Özel (ID gir)…"]
+        model_var = tk.StringVar(value=model_names[0])
+        model_cb = ttk.Combobox(form, textvariable=model_var,
+                                values=model_names, state="readonly", width=34)
+        model_cb.grid(row=3, column=1, sticky=tk.EW, pady=6)
+
+        ttk.Label(form, text="Model ID:", width=14, anchor=tk.W).grid(
+            row=4, column=0, sticky=tk.W, pady=6)
+        mid_var = tk.IntVar(value=cfg["model_id"])
+        mid_entry = ttk.Entry(form, textvariable=mid_var, width=10)
+        mid_entry.grid(row=4, column=1, sticky=tk.W, pady=6)
+
+        def _on_model_select(*_):
+            name = model_var.get()
+            if name in OTTOMAN_MODELS:
+                mid_var.set(OTTOMAN_MODELS[name])
+        model_cb.bind("<<ComboboxSelected>>", _on_model_select)
+
+        form.columnconfigure(1, weight=1)
+
+        # ── Kredi bilgisi ────────────────────────────────────────────────
+        info_var = tk.StringVar(value="")
+        info_lbl = ttk.Label(dlg, textvariable=info_var,
+                             font=("Segoe UI", 9, "italic"), foreground="#2a7a2a")
+        info_lbl.pack(padx=16, anchor=tk.W)
+
+        def _test():
+            try:
+                save_config(email_var.get(), pw_var.get(), mid_var.get())
+                # Önbelleği sıfırla
+                import metin_atolyesi.core.transkribus_ocr as _t
+                _t._session_id = ""
+                info = get_credit_info()
+                info_var.set(f"✓ Bağlantı başarılı — {info}")
+            except Exception as e:
+                info_var.set(f"✗ {e}")
+
+        def _save():
+            save_config(email_var.get(), pw_var.get(), mid_var.get())
+            dlg.destroy()
+
+        # ── Bağlantı linki ───────────────────────────────────────────────
+        link_frm = ttk.Frame(dlg)
+        link_frm.pack(fill=tk.X, padx=16, pady=(4, 2))
+        ttk.Label(link_frm, text="Hesap açmak için:",
+                  font=("Segoe UI", 9)).pack(side=tk.LEFT)
+        link = ttk.Label(link_frm, text="https://app.transkribus.ai",
+                         font=("Segoe UI", 9, "underline"), foreground="#0d6efd",
+                         cursor="hand2")
+        link.pack(side=tk.LEFT, padx=4)
+        link.bind("<Button-1>", lambda _: __import__("webbrowser").open(
+            "https://app.transkribus.ai"))
+
+        ttk.Label(dlg,
+                  text="Her sayfa işlemi ~1-2 kredi tüketir. Ücretsiz hesap ~500 kredi ile başlar.",
+                  font=("Segoe UI", 8), foreground="#888").pack(padx=16, anchor=tk.W)
+
+        # ── Düğmeler ────────────────────────────────────────────────────
+        btn_row = ttk.Frame(dlg)
+        btn_row.pack(fill=tk.X, padx=16, pady=(10, 14))
+        ttk.Button(btn_row, text="🔌 Bağlantıyı Test Et", command=_test).pack(
+            side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_row, text="✓ Kaydet", command=_save).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text="İptal", command=dlg.destroy).pack(side=tk.RIGHT)
+
     # -----------------------------------------------------------------------
 
     def _on_scope_change(self) -> None:

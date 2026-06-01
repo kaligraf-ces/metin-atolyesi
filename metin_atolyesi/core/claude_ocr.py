@@ -103,6 +103,214 @@ def _image_to_base64(path: Path, max_bytes: int = 4_800_000) -> tuple[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Prompt oluşturma yardımcıları
+# ---------------------------------------------------------------------------
+
+def _build_ms_guidance(meta: dict) -> str:
+    """El yazması meta verisinden Claude için ayrıntılı OCR rehberi üretir.
+
+    Normal PDF için meta boş sözlük gelir → boş string döner.
+    El yazması için wizard/OCR panelinden dolu sözlük gelir → zengin rehber döner.
+    """
+    if not meta:
+        return ""
+
+    lines: list[str] = []
+
+    # ── Kimlik ───────────────────────────────────────────────────────────
+    if eser := meta.get("eser_adi", "").strip():
+        lines.append(f"Eser: {eser}")
+
+    # ── Yazı karakteristiği ──────────────────────────────────────────────
+    kaligrafi: list[str] = []
+    if yazi := meta.get("yazi_turu", "").strip():
+        kaligrafi.append(f"{yazi} hattı")
+    if hareke := meta.get("hareke", "").strip():
+        hareke_acik = {
+            "Harekesiz":       "hareke yok — sesli harfleri bağlamdan çıkarın",
+            "Tam harekeli":    "tüm harflerde hareke var — hareke işaretlerini okumaya dahil etmeyin",
+            "Kısmen harekeli": "bazı harflerde hareke var",
+        }.get(hareke, hareke)
+        kaligrafi.append(hareke_acik)
+    if donem := meta.get("donem", "").strip():
+        kaligrafi.append(f"{donem} dönemi")
+    if kaligrafi:
+        lines.append("Yazı: " + ", ".join(kaligrafi))
+
+    # ── Sayfa düzeni ─────────────────────────────────────────────────────
+    sutun = meta.get("sutun_sayisi", 1)
+    if isinstance(sutun, int) and sutun > 1:
+        lines.append(f"Sayfa düzeni: {sutun} sütun — her sütunu ayrı ayrı, yukarıdan aşağı oku")
+    elif meta.get("mensur_manzum") == "Manzum":
+        beyit = meta.get("beyit_duzen", "")
+        if beyit == "yan_yana":
+            lines.append("Manzum metin: beyitler iki sütun hâlinde (sağ = birinci mısra, sol = ikinci mısra)")
+        elif beyit == "girintili":
+            lines.append("Manzum metin: birinci mısra sola dayalı, ikinci mısra girintili")
+        else:
+            lines.append("Manzum metin: her mısrayı ayrı satırda göster")
+
+    # ── İmla özellikleri ─────────────────────────────────────────────────
+    imla_secimler: list[str] = meta.get("imla_secimler", [])
+    if imla_secimler:
+        lines.append("Bu metinde sık rastlanan imla özellikleri (bunları göz önünde bulundur):")
+        # İmla kodlarını okunabilir açıklamaya çevir
+        _IMLA_ACIK: dict[str, str] = {
+            "c / ç karışıklığı": "c ile ç birbiriyle karışabilir (örn. 'cay' → 'çay')",
+            "k / g karışıklığı": "k ile g birbiriyle karışabilir",
+            "kaf / gaf imlası":  "kaf (ك) ve gaf (گ) harfleri noktasız veya farklı yazılabilir",
+            "elif meddesi":      "uzun â sesi elif-medd işaretiyle gösterilir (آ)",
+            "kelime sonu elif":  "kelime sonlarında elif harfi eklenmiş olabilir",
+            "hemze varyantları": "hemze (ء, أ, إ, ؤ, ئ) tutarsız yazılabilir",
+            "te-i marbute":      "te-i marbuta (ة) bazen he (ه) olarak yazılmış",
+            "ya / elif meksure": "ya-i meksure (ى) bazen elif (ا) gibi görünür",
+            "nun-i gayre":       "kelimelerin sonundaki nun bazen gösterilmemiş",
+            "elif-i maksure":    "elif-i maksure (ى) ve ye (ي) karışabilir",
+        }
+        for s in imla_secimler:
+            acik = _IMLA_ACIK.get(s, s)
+            lines.append(f"  • {acik}")
+
+    # ── Serbest imla notu ────────────────────────────────────────────────
+    if imla_serbest := meta.get("imla_serbest", "").strip():
+        lines.append(f"Ek imla notu: {imla_serbest}")
+
+    # ── Transkripsiyon işaretleri ────────────────────────────────────────
+    trans_isaretleri: list[dict] = meta.get("trans_isaretleri", [])
+    aktif_isaretler = [t for t in trans_isaretleri if t.get("isaret") and t.get("karsilik")]
+    if aktif_isaretler:
+        lines.append("Bu kaynakta kullanılan transkripsiyon işaretleri:")
+        for t in aktif_isaretler[:8]:  # max 8 göster
+            isaret  = t["isaret"]
+            karsilik = t["karsilik"]
+            arap    = t.get("arap_harfi", "")
+            if arap:
+                lines.append(f"  • {isaret} → Arap harfi: {arap}, karşılık: {karsilik}")
+            else:
+                lines.append(f"  • {isaret} → {karsilik}")
+
+    # ── Kelime yoğunluğu ─────────────────────────────────────────────────
+    yogunluk: dict = meta.get("kelime_yogunlugu", {})
+    if yogunluk:
+        bilgi = []
+        for dil, oran in yogunluk.items():
+            if isinstance(oran, (int, float)) and oran > 0:
+                bilgi.append(f"%{oran} {dil}")
+        if bilgi:
+            lines.append("Tahmini kelime dağılımı: " + ", ".join(bilgi))
+            # Baskın dile göre ek ipucu
+            baskın = max(yogunluk, key=lambda k: yogunluk.get(k, 0))
+            if baskın == "Arapça" and yogunluk.get("Arapça", 0) > 50:
+                lines.append("  → Arapça kelimeler için köklü okumayı tercih et")
+            elif baskın == "Türkçe" and yogunluk.get("Türkçe", 0) > 60:
+                lines.append("  → Türkçe ses uyumunu dikkate al")
+
+    # ── Paleografik harf formları ─────────────────────────────────────────
+    harf_formlari: list[dict] = meta.get("harf_formlari", [])
+    aktif_harfler = [
+        hf for hf in harf_formlari
+        if isinstance(hf, dict) and hf.get("harf")
+    ]
+    if aktif_harfler:
+        lines.append("Bu eserde dikkat edilmesi gereken harf yazım biçimleri:")
+        for hf in aktif_harfler[:12]:  # max 12 göster
+            harf   = hf.get("harf", "")
+            konum  = hf.get("konum", "")
+            ornek  = hf.get("ornek_kelime", "")
+            acikl  = hf.get("aciklama", "")
+            parçalar = [f"{harf}"]
+            if konum:
+                parçalar.append(f"{konum} konumunda")
+            if ornek:
+                parçalar.append(f"(örnek: {ornek})")
+            if acikl:
+                parçalar.append(f"— {acikl}")
+            lines.append("  • " + " ".join(parçalar))
+
+    # ── Aktarım ilkeleri ─────────────────────────────────────────────────
+    if aktarim := meta.get("aktarim_ilkeleri", "").strip():
+        lines.append(f"Transkripsiyon kuralları: {aktarim}")
+
+    # ── Özel notlar ──────────────────────────────────────────────────────
+    if ozel := meta.get("ozel_notlar", "").strip():
+        lines.append(f"Editör notu: {ozel}")
+
+    return "\n".join(lines)
+
+
+def _build_ocr_prompt(
+    lang_desc: str,
+    fewshot_text: str,
+    ms_guidance: str,
+    meta: dict,
+) -> str:
+    """Duruma göre basit (normal PDF) veya ayrıntılı (el yazması) prompt üretir."""
+
+    is_manuscript = bool(meta and any([
+        meta.get("yazi_turu"), meta.get("imla_secimler"),
+        meta.get("trans_isaretleri"), meta.get("eser_adi"),
+    ]))
+
+    # Arapça/Osmanlıca için sağdan-sola oku yönergesi
+    is_arabic_script = any(
+        code in lang_desc.lower()
+        for code in ["osmanlıca", "arap", "arabic", "ara", "fas", "farsça"]
+    )
+    yon_kural = (
+        "- Metin SAĞDAN SOLA yazılmıştır; her satırı sağdan sola, sayfayı yukarıdan aşağı oku"
+        if is_arabic_script
+        else "- Birden fazla sütun varsa soldan sağa, yukarıdan aşağı oku"
+    )
+
+    # ── Normal PDF (makale, kitap, tez) ──────────────────────────────────
+    if not is_manuscript:
+        return f"""\
+Bu görüntüdeki metni ({lang_desc}) tam olarak oku ve transkripsiyonunu yap.
+{fewshot_text}
+Kurallar:
+- Yalnızca metni döndür — açıklama, yorum veya özet ekleme
+- Sayfa düzenini (paragraf, başlık, dipnot, sütun) olduğu gibi koru
+- Okunamayan veya emin olmadığın kelimelerin başına [?] koy
+- Çeviri yapma; orijinal dil ve yazıyla yaz
+{yon_kural}"""
+
+    # ── El yazması: ayrıntılı rehber ─────────────────────────────────────
+    sutun = meta.get("sutun_sayisi", 1)
+    if isinstance(sutun, int) and sutun > 1:
+        if is_arabic_script:
+            sutun_kural = f"- {sutun} sütunlu sayfa: sağ sütundan başla, sağdan sola, yukarıdan aşağı oku"
+        else:
+            sutun_kural = f"- {sutun} sütunlu sayfa: soldan sağa sırayla, yukarıdan aşağı oku"
+    else:
+        sutun_kural = yon_kural
+
+    # Osmanlıca özel ek yönergeler
+    osmanli_ek = ""
+    if is_arabic_script:
+        osmanli_ek = """\
+Osmanlıca/Arapça yazı kuralları:
+- Harfleri Arap alfabesiyle yaz; Latin harfe çevirme (transkripsiyon yapma)
+- Kelimeleri tam olarak döndür; hareke işaretleri varsa dahil et
+- Ligatürler (bitişik harfler) doğru çözümlenmeli: ﻻ, ﻟﻠ, ﻣﻤ gibi bileşiklere dikkat
+- Kelimelerin başı/ortası/sonu biçimleri farklıdır; bağlamdan yararlan
+- Noktasız harfler: kef (ك/ﮒ/گ), elif-hemze çeşitleri bağlamdan çıkar"""
+
+    return f"""\
+Bu el yazması sayfasındaki metni ({lang_desc}) tam olarak oku ve transkripsiyonunu yap.
+{fewshot_text}
+{("─── EL YAZMASINA ÖZEL BİLGİLER ───\n" + ms_guidance + "\n─────────────────────────────────────\n") if ms_guidance else ""}\
+{(osmanli_ek + "\n") if osmanli_ek else ""}\
+Genel kurallar:
+- Yalnızca metni döndür — açıklama, yorum veya özet ekleme
+- Her satırı ayrı satır olarak yaz; paragraf boşluklarını koru
+- Okunamayan veya emin olmadığın kelimelerin hemen başına [?] koy (örn. [?]kelime)
+- Çeviri yapma; metni orijinal yazı sistemiyle yaz
+- Sayfa numaraları, başlıklar, hatime, besmele, dipnotlar dahil görüntüdeki her şeyi oku
+{sutun_kural}
+- El yazmasına özel bilgileri OCR kararlarında öncelikle dikkate al"""
+
+
+# ---------------------------------------------------------------------------
 # Ana OCR fonksiyonu
 # ---------------------------------------------------------------------------
 
@@ -151,7 +359,7 @@ def ocr_with_claude(
     lang_desc = _LANG_DESC.get(lang_hint, "Türkçe metin")
     b64_data, media_type = _image_to_base64(image_path)
 
-    # Few-shot eklentisi (yazma kütüphanesinden)
+    # ── Few-shot: kütüphaneden görsel benzer sayfa örnekleri ─────────────
     fewshot_text   = ""
     fewshot_blocks: list[dict] = []
     if manuscript_meta:
@@ -168,16 +376,11 @@ def ocr_with_claude(
         except Exception:
             pass
 
-    prompt = f"""\
-Bu görüntüdeki {lang_desc}ni tam olarak oku ve transkripsiyonunu yap.
-{fewshot_text}
-Kurallar:
-- Yalnızca metni döndür — açıklama, yorum veya özet ekleme
-- Satır sonlarını ve paragraf yapısını olduğu gibi koru
-- Okunamayan veya emin olmadığın kelimelerin hemen başına [?] işareti koy (örn. [?]kelime)
-- Çeviri yapma; metni orijinal dil ve yazı sistemiyle yaz
-- Sayfa numaraları, başlıklar, dipnotlar dahil görüntüdeki her şeyi oku
-- Birden fazla sütun varsa soldan sağa, yukarıdan aşağı oku"""
+    # ── El yazması meta verisinden ayrıntılı OCR rehberi ─────────────────
+    ms_guidance = _build_ms_guidance(manuscript_meta or {})
+
+    # ── Prompt ───────────────────────────────────────────────────────────
+    prompt = _build_ocr_prompt(lang_desc, fewshot_text, ms_guidance, manuscript_meta or {})
 
     try:
         client = anthropic.Anthropic(api_key=api_key)

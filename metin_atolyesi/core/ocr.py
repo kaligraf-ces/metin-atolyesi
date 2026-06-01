@@ -36,9 +36,12 @@ def preprocess_image(path: Path, output_path: Path, mode: str = "dengeli") -> Pa
         import cv2
         import numpy as np
 
-        img = cv2.imread(str(path))
+        # Windows'ta cv2.imread Türkçe/özel karakterli yolları okuyamaz.
+        # Çözüm: dosyayı byte olarak oku, numpy ile decode et.
+        raw = np.frombuffer(path.read_bytes(), np.uint8)
+        img = cv2.imdecode(raw, cv2.IMREAD_COLOR)
         if img is None:
-            raise ValueError("Görüntü açılamadı")
+            raise ValueError(f"OpenCV goruntu acilamadi: {path.name}")
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
         if mode == "zorlu":
@@ -47,13 +50,17 @@ def preprocess_image(path: Path, output_path: Path, mode: str = "dengeli") -> Pa
             kernel = np.ones((1, 1), np.uint8)
             binary = cv2.dilate(binary, kernel, iterations=1)
             binary = cv2.erode(binary, kernel, iterations=1)
-            cv2.imwrite(str(output_path), binary)
+            # cv2.imwrite de Türkçe yol sorununu yaşayabilir
+            _, enc = cv2.imencode(output_path.suffix or ".png", binary)
+            output_path.write_bytes(enc.tobytes())
         elif mode == "temiz":
             enhanced = cv2.convertScaleAbs(gray, alpha=1.35, beta=10)
-            cv2.imwrite(str(output_path), enhanced)
+            _, enc = cv2.imencode(output_path.suffix or ".png", enhanced)
+            output_path.write_bytes(enc.tobytes())
         else:  # dengeli
             enhanced = cv2.convertScaleAbs(gray, alpha=1.8, beta=5)
-            cv2.imwrite(str(output_path), enhanced)
+            _, enc = cv2.imencode(output_path.suffix or ".png", enhanced)
+            output_path.write_bytes(enc.tobytes())
         return output_path
     except ImportError:
         pass
@@ -113,31 +120,66 @@ def ocr_image(
     lang: str = "tur+eng",
     engine: str = "otomatik",
     psm: int = 6,
+    manuscript_meta: dict | None = None,
 ) -> tuple[str, list[dict[str, object]]]:
-    # Claude Vision API motoru
+    # ── Transkribus HTR ────────────────────────────────────────────────────
+    if engine == "transkribus":
+        from .transkribus_ocr import ocr_with_transkribus
+        return ocr_with_transkribus(
+            path, lang_hint=lang,
+            manuscript_meta=manuscript_meta or {},
+        )
+
+    # ── Claude Vision API ──────────────────────────────────────────────────
     if engine == "claude":
         from .claude_ocr import ocr_with_claude, get_api_key
-        return ocr_with_claude(path, lang_hint=lang, api_key=get_api_key())
+        return ocr_with_claude(
+            path, lang_hint=lang, api_key=get_api_key(),
+            manuscript_meta=manuscript_meta or {},
+        )
 
+    # ── Windows OCR (açık seçim) ───────────────────────────────────────────
     if engine == "windows":
         text, suspicious = ocr_image_with_windows_ocr(path)
         return text, suspicious + find_uncertain_words(text)
 
-    tesseract_cmd = find_tesseract()
-    use_tesseract = module_available("pytesseract") and tesseract_cmd
+    # ── EasyOCR ───────────────────────────────────────────────────────────
+    if engine == "easyocr":
+        text, suspicious = ocr_image_with_easyocr(path, lang)
+        return text, suspicious + find_uncertain_words(text)
 
-    if engine == "rapidocr" or (engine == "otomatik" and not use_tesseract):
+    # ── RapidOCR (açık seçim) ─────────────────────────────────────────────
+    if engine == "rapidocr":
         text, suspicious = ocr_image_with_rapidocr(path)
         return text, suspicious + find_uncertain_words(text)
+
+    # ── Tesseract ─────────────────────────────────────────────────────────
+    tesseract_cmd = find_tesseract()
+    use_tesseract = module_available("pytesseract") and bool(tesseract_cmd)
 
     if engine == "tesseract" or (engine == "otomatik" and use_tesseract):
         try:
             import os
             import pytesseract
 
-            tessdata = Path(__file__).resolve().parents[2] / "tessdata"
-            if tessdata.exists():
-                os.environ["TESSDATA_PREFIX"] = str(tessdata)
+            # Tessdata arama sırası: exe klasörü → uygulama içi → kullanıcı → sistem
+            import sys as _sys
+            # PyInstaller 6+: _internal/ dizinini sys._MEIPASS ile bul
+            _exe_dir = (
+                Path(getattr(_sys, "_MEIPASS", _sys.executable)).resolve()
+                if getattr(_sys, "frozen", False)
+                else Path(__file__).resolve().parents[2]
+            )
+            _tessdata_candidates = [
+                _exe_dir / "tessdata",                                   # exe _internal/tessdata
+                Path.home() / ".metin_atolyesi" / "tessdata",            # kullanıcı dizini
+                Path(r"C:\Program Files\Tesseract-OCR\tessdata"),        # sistem Tesseract
+                Path(r"C:\Program Files (x86)\Tesseract-OCR\tessdata"),
+            ]
+            for _td in _tessdata_candidates:
+                if _td.exists() and any(_td.glob("*.traineddata")):
+                    os.environ["TESSDATA_PREFIX"] = str(_td)
+                    break
             pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
             text = pytesseract.image_to_string(
                 Image.open(path), lang=lang, config=f"--psm {psm}")
@@ -146,13 +188,33 @@ def ocr_image(
         except Exception:
             if engine == "tesseract":
                 raise
+            # otomatik modda başarısız → fallback devam eder
 
-    # Otomatik fallback zinciri
+    # ── Otomatik fallback zinciri ──────────────────────────────────────────
+    # Sıra: RapidOCR (kuruluysa) → Windows OCR → EasyOCR (kuruluysa)
+    if module_available("rapidocr_onnxruntime"):
+        text, suspicious = ocr_image_with_rapidocr(path)
+        if text.strip() and "hazır değil" not in text:
+            return text, suspicious + find_uncertain_words(text)
+
     text, suspicious = ocr_image_with_windows_ocr(path)
     if text.strip():
         return text, suspicious + find_uncertain_words(text)
-    text, suspicious = ocr_image_with_rapidocr(path)
-    return text, suspicious + find_uncertain_words(text)
+
+    if module_available("easyocr"):
+        text, suspicious = ocr_image_with_easyocr(path, lang)
+        if text.strip():
+            return text, suspicious + find_uncertain_words(text)
+
+    return (
+        "⚠ OCR motoru bulunamadı.\n"
+        "Çözüm seçenekleri:\n"
+        "  • pip install pytesseract  (+ Tesseract kurulumu)\n"
+        "  • pip install rapidocr-onnxruntime\n"
+        "  • pip install easyocr\n"
+        "  • Motor olarak 'windows' veya 'claude ⚡' seçin.",
+        [],
+    )
 
 
 def ocr_image_with_confidence(
@@ -165,8 +227,24 @@ def ocr_image_with_confidence(
     if not (module_available("pytesseract") and tesseract_cmd):
         return ocr_image(path, lang, psm=psm)
     try:
+        import os
         import pytesseract
 
+        import sys as _sys
+        _exe_dir2 = (
+            Path(getattr(_sys, "_MEIPASS", _sys.executable)).resolve()
+            if getattr(_sys, "frozen", False)
+            else Path(__file__).resolve().parents[2]
+        )
+        _tessdata_candidates = [
+            _exe_dir2 / "tessdata",
+            Path.home() / ".metin_atolyesi" / "tessdata",
+            Path(r"C:\Program Files\Tesseract-OCR\tessdata"),
+        ]
+        for _td in _tessdata_candidates:
+            if _td.exists() and any(_td.glob("*.traineddata")):
+                os.environ["TESSDATA_PREFIX"] = str(_td)
+                break
         pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
         data = pytesseract.image_to_data(
             Image.open(path), lang=lang,
@@ -196,8 +274,16 @@ def ocr_image_with_confidence(
         return ocr_image(path, lang)
 
 
+def _tools_dir() -> Path:
+    """tools/ dizinini frozen ve normal modda doğru bul."""
+    import sys as _s
+    if getattr(_s, "frozen", False):
+        return Path(getattr(_s, "_MEIPASS", _s.executable)).resolve() / "tools"
+    return Path(__file__).resolve().parents[2] / "tools"
+
+
 def ocr_image_with_windows_ocr(path: Path, language: str = "tr") -> tuple[str, list[dict[str, object]]]:
-    script = Path(__file__).resolve().parents[2] / "tools" / "windows_ocr.ps1"
+    script = _tools_dir() / "windows_ocr.ps1"
     if not script.exists():
         return "", []
     completed = subprocess.run(
@@ -227,10 +313,7 @@ def ocr_image_with_windows_ocr(path: Path, language: str = "tr") -> tuple[str, l
 
 def ocr_image_with_rapidocr(path: Path) -> tuple[str, list[dict[str, object]]]:
     if not module_available("rapidocr_onnxruntime"):
-        return (
-            "OCR motoru hazır değil. Tesseract veya RapidOCR kurulduktan sonra bu sayfa yeniden okunabilir.",
-            [{"word": "OCR motoru hazır değil", "start": 0, "end": 22, "confidence": 0.0}],
-        )
+        return "", []
     try:
         from rapidocr_onnxruntime import RapidOCR
 
@@ -244,8 +327,44 @@ def ocr_image_with_rapidocr(path: Path) -> tuple[str, list[dict[str, object]]]:
         text = preserve_transcription("\n".join(lines))
         return text, find_suspicious_words(text) + find_uncertain_words(text)
     except Exception as exc:
-        message = f"OCR motoru çalışamadı. Windows OCR/Tesseract/RapidOCR hata verdi: {exc}"
-        return message, [{"word": "OCR motoru çalışamadı", "start": 0, "end": 22, "confidence": 0.0}]
+        return "", [{"word": str(exc)[:40], "start": 0, "end": 0, "confidence": 0.0}]
+
+
+# EasyOCR reader önbelleği (ilk yükleme yavaş — yeniden kullan)
+_easyocr_readers: dict[tuple, object] = {}
+
+
+def ocr_image_with_easyocr(path: Path, lang: str = "tr+en") -> tuple[str, list[dict[str, object]]]:
+    """EasyOCR motoru — Arapça/Osmanlıca/Türkçe/İngilizce destekler.
+
+    Kurulum: pip install easyocr
+    """
+    if not module_available("easyocr"):
+        return "", []
+    try:
+        import easyocr  # type: ignore
+
+        # Dil kodlarını EasyOCR formatına çevir
+        _map = {"tur": "tr", "ara": "ar", "eng": "en", "fas": "fa",
+                "deu": "de", "fra": "fr", "tr": "tr", "ar": "ar", "en": "en"}
+        langs: list[str] = []
+        for code in lang.replace("+", " ").split():
+            mapped = _map.get(code.strip(), code.strip()[:2])
+            if mapped not in langs:
+                langs.append(mapped)
+        if not langs:
+            langs = ["tr", "en"]
+
+        key = tuple(sorted(langs))
+        if key not in _easyocr_readers:
+            _easyocr_readers[key] = easyocr.Reader(langs, gpu=False, verbose=False)
+        reader = _easyocr_readers[key]
+
+        result = reader.readtext(str(path), detail=0, paragraph=True)
+        text = preserve_transcription("\n".join(result) if result else "")
+        return text, find_suspicious_words(text) + find_uncertain_words(text)
+    except Exception as exc:
+        return "", [{"word": str(exc)[:40], "start": 0, "end": 0, "confidence": 0.0}]
 
 
 # ---------------------------------------------------------------------------
@@ -370,7 +489,7 @@ def images_from_pdf_with_windows(
     first: int = 0,
     last: int | None = None,
 ) -> Iterable[Path]:
-    script = Path(__file__).resolve().parents[2] / "tools" / "windows_pdf_render.ps1"
+    script = _tools_dir() / "windows_pdf_render.ps1"
     if not script.exists():
         return
     args = [
