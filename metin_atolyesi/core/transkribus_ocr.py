@@ -154,19 +154,13 @@ def ocr_with_transkribus(
 ) -> tuple[str, list[dict]]:
     """Transkribus HTR API ile tek sayfa OCR.
 
-    İş akışı:
-      1. Oturum aç (önbelleklenmiş)
-      2. Metin Atölyesi koleksiyonunu bul veya oluştur
-      3. Görüntüyü belge olarak yükle (2 adımlı: metadata + görüntü)
-      4. HTR işini başlat
-      5. İş tamamlanana kadar bekle (max timeout sn)
-      6. Transkripsiyonu al, geçici belgeyi temizle
-      7. Metin + şüpheli kelimeler döndür
+    DURUM: Transkribus'un yeni Processing API'si (processing/v1/) yalnızca
+    Keycloak JWT token kabul ediyor. Ancak auth servisi
+    (account.transkribus.eu) DNS çözümlenemiyor — bu ağdan erişilemiyor.
 
-    NOT: Transkribus'un yeni platform API'si (app.transkribus.ai) için
-    ayrı kimlik doğrulama gereklidir. Bu fonksiyon klasik REST API kullanır.
-    Hesabınızda HTR modeli yoksa web arayüzünü kullanın:
-    https://transkribus.eu/r/read/login
+    Çalışan alternatifler:
+      • Claude API (claude ⚡) — Osmanlıca için en iyi kalite
+      • Web arayüzü: https://app.transkribus.ai
     """
     import requests
     from .text_tools import find_suspicious_words, find_uncertain_words

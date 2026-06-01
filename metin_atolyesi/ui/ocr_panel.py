@@ -1857,17 +1857,22 @@ class OcrPanel(ttk.Frame):
 
         elif "transkribus" in eng:
             self._engine_var.set("transkribus")   # emoji eki olmadan sakla
-            from metin_atolyesi.core.transkribus_ocr import credentials_set
-            if not credentials_set():
-                answer = messagebox.askyesno(
-                    "Transkribus Ayarları",
-                    "Transkribus kimlik bilgileri henüz girilmemiş.\n\n"
-                    "Transkribus, Osmanlıca el yazmaları için dünya standardı HTR platformudur.\n"
-                    "Ücretsiz hesap: https://app.transkribus.ai\n\n"
-                    "Şimdi yapılandırmak ister misiniz?",
-                )
-                if answer:
-                    self._open_transkribus_settings()
+            # ⚠ Transkribus yeni API auth servisi bu ağdan erişilemiyor.
+            # account.transkribus.eu DNS kaydı mevcut değil (global sorun).
+            import webbrowser
+            answer = messagebox.askokcancel(
+                "Transkribus — Ağ Kısıtlaması",
+                "⚠ Transkribus API'si bu ağdan erişilemiyor.\n\n"
+                "Teknik neden: Transkribus'un kimlik doğrulama sunucusu\n"
+                "(account.transkribus.eu) DNS'de kayıtlı değil.\n\n"
+                "Alternatifler:\n"
+                "  • Claude ⚡ seçin — Osmanlıca için en iyi sonuç\n"
+                "  • Transkribus web: app.transkribus.ai\n\n"
+                "Web arayüzünü açmak ister misiniz?",
+            )
+            if answer:
+                webbrowser.open("https://app.transkribus.ai")
+            self._engine_var.set("claude")  # Claude'a geç
 
     # -----------------------------------------------------------------------
     # Kapsam seçimi
